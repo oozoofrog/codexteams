@@ -45,3 +45,9 @@
 - User explicitly requested merging into main, then creating a public GitHub repository. main was fast-forwarded to `32ebc1c`; the post-merge TypeScript check and all 77 tests passed.
 - Created `https://github.com/oozoofrog/codexteams` as public, connected origin and pushed main. GitHub's default branch and matching local/remote commit were verified.
 - Publication audit inspected both existing commits and all 46 reachable file blobs; no credential or private-key blockers found. Local ZIP, dependencies, runtime state and external evidence logs were not published. Existing npm-private and license settings were retained.
+
+## 2026-11-01 installation from a repository link
+
+- User requested a README that lets another agent install from the link and explicitly authorized pushing it. Added direct GitHub URL installation, prerequisites and pinned Pi bootstrap, personal/project scope, exact noninteractive command checks, reload/login boundaries, update/remove and separate development clone instructions.
+- Executed the public URL installation on Pi 1.4.0 with disposable settings and no provider credentials: install/list, two finalized help/status messages, update and remove all passed. No model turns or project state were created. Full evidence: `remote-install-readme.log` and `remote-install-readme-summary.json` in the existing verification folder.
+- Independent documentation review confirmed source/CLI semantics and corrected the success criterion to count message_end events, rather than both start/end records. No application code changed; the existing 77-test result remains applicable. Shell syntax and whitespace were checked for the documentation change.

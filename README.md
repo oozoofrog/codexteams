@@ -6,24 +6,78 @@ Pi 안에서 프로젝트 목표를 작업으로 나누고, 역할별 모델을 
 
 ## 설치
 
-Node 22.19 이상, Pi 1.4.x가 필요합니다. Pi 자체 설치와 로그인은 기존 Pi 방식대로 진행하세요. 이 패키지는 API 키나 OAuth 토큰을 복사하지 않습니다.
+Node **22.19.0 이상**, npm, Git, Pi **1.4.0 이상 2 미만**이 필요합니다. 현재 macOS와 Pi 1.4.0에서 검증했습니다. Windows의 쓰기 worker는 지원하지 않습니다.
 
-소스 폴더 안에서:
+### 빠른 설치
+
+Pi가 설치되어 있다면 아래 명령으로 GitHub에서 바로 설치합니다. 별도 clone이나 `npm ci`는 필요하지 않습니다.
 
 ```bash
+pi install https://github.com/oozoofrog/codexteams
+pi list
+```
+
+기본 설치는 사용자별 Pi 설정에 등록합니다. 현재 프로젝트에만 등록하려면 그 프로젝트 폴더에서 다음 명령을 사용합니다. 프로젝트 설치는 Pi에서 해당 프로젝트를 신뢰한 뒤 로드됩니다.
+
+```bash
+pi install --local https://github.com/oozoofrog/codexteams
+```
+
+### 링크를 받은 에이전트의 설치 순서
+
+1. `node --version`, `npm --version`, `git --version`, `pi --version`으로 기존 환경을 확인합니다. Node·npm·Git이 없거나 버전이 맞지 않으면 현재 OS의 패키지 관리자로 준비한 뒤 다시 확인합니다.
+2. Pi가 없으면 아래 명령으로 검증 버전을 설치합니다. 기존 Pi가 지원 범위 밖이면 기존 설치 방법으로 호환 버전을 준비합니다. 로그인과 기존 설정을 초기화하지 않습니다.
+
+   ```bash
+   npm install -g @earendil-works/pi-coding-agent@1.4.0
+   pi --version
+   ```
+
+3. `pi list`로 기존 등록을 확인한 뒤 빠른 설치 명령을 실행합니다. 이미 같은 URL이 등록되어 있으면 아래 업데이트 명령을 사용합니다. 로컬 소스와 GitHub 소스를 동시에 등록하지 않습니다. 기존 소스 폴더를 삭제하거나 덮어쓰지 않습니다.
+4. 아래 명령으로 새 Pi 프로세스에서 설치를 확인합니다. 표준 입력을 닫아 자동화 환경의 EOF 대기를 방지합니다.
+
+   ```bash
+   pi --mode json -p --no-session --no-skills --no-prompt-templates --no-mcp -- "/teams help" "/teams status" </dev/null
+   ```
+
+   종료 코드가 0이고, JSONL에서 `type`이 `message_end`이며 `message.customType`이 `codexteams`인 이벤트가 두 개 나오면 명령 로드를 확인한 것입니다. 작업이 없는 프로젝트에서는 `status`도 사용 안내를 표시합니다. 오류가 나거나 메시지가 없으면 설치 완료로 보고하지 말고 오류를 확인합니다.
+
+5. 실행 중인 Pi가 있으면 `/reload`합니다. 새로 실행한 Pi는 등록된 확장을 자동으로 로드합니다. 설치 결과에는 Pi 버전, 설치 범위, `pi list` 결과와 위 확인 명령의 결과를 남깁니다.
+6. 설치 확인에 `/teams start`나 `/teams run`을 사용하지 않습니다. 실제 작업을 시작할 때 로그인이 필요하면 사용자가 Pi의 `/login`을 완료한 뒤 `/model`에서 모델을 확인합니다. API 키나 OAuth 토큰을 복사하거나 로그에 출력하지 않습니다.
+
+설치 자체에는 모델 로그인이 필요하지 않습니다. 위 명령 확인은 모델 실행이나 대화형 TUI의 시각 검증을 뜻하지 않습니다.
+
+### 업데이트와 제거
+
+```bash
+pi update https://github.com/oozoofrog/codexteams
+pi remove https://github.com/oozoofrog/codexteams
+```
+
+프로젝트에만 설치했다면 업데이트 명령은 해당 프로젝트 폴더에서 실행하고, 제거 명령에는 `--local`을 붙입니다. `pi update`만 실행하면 Pi 자체를 업데이트합니다. 업데이트 후 실행 중인 Pi에서는 `/reload`합니다.
+
+GitHub 설치본은 Pi가 관리합니다. 직접 수정할 개발용 소스는 아래 방법으로 별도 clone합니다. Pi의 업데이트가 관리 중인 설치 폴더를 다시 맞출 수 있으므로 그 폴더에서 개발하지 않습니다.
+
+### 소스를 수정하며 설치
+
+```bash
+git clone https://github.com/oozoofrog/codexteams.git codexteams
+cd codexteams
 npm ci --ignore-scripts --no-audit --no-fund
 pi install "$PWD"
 ```
 
-Pi에서 `/reload`하거나 다시 실행합니다. Mac의 목표 폴더로 옮기면서 설치하려면 추출한 소스 폴더에서 다음 스크립트를 사용합니다.
+이미 clone한 소스라면 해당 폴더에서 마지막 두 명령만 실행합니다. 새로 clone할 경로에 `codexteams` 폴더가 이미 있으면 기존 내용을 보존하고 다른 빈 경로를 선택합니다.
+
+Mac에서 소스를 다른 폴더로 복사하며 설치하려면 소스 폴더에서 다음 스크립트를 실행합니다.
 
 ```bash
 bash scripts/install-macos.sh --target "$HOME/develop/codexteams"
 ```
 
-기본 대상도 `$HOME/develop/codexteams`입니다. 기존의 비어 있지 않은 폴더는 덮어쓰지 않습니다. `--copy-only`는 소스만 복사하고 의존성 설치나 Pi 설정 변경을 하지 않습니다. 이미 목표 폴더에 압축을 풀었다면 그 폴더에서 스크립트를 실행해도 됩니다.
+기본 대상도 `$HOME/develop/codexteams`입니다. 기존의 비어 있지 않은 폴더는 덮어쓰지 않습니다. `--copy-only`는 소스만 복사하고 의존성 설치나 Pi 설정 변경을 하지 않습니다.
 
-macOS에서 확인한 설치·명령·자동 테스트 범위는 [검증 기록](docs/verification.md)에 정리했습니다. 격리된 Pi 설정의 설치 검증과 실제 사용 중인 Pi에 등록하는 단계는 구분합니다.
+설치 소스와 범위의 동작은 [Pi 패키지 문서](https://pi.dev/docs/latest/packages), 관리 명령은 [Pi CLI 문서](https://pi.dev/docs/latest/cli)를 참고하세요. 실제 검증 범위는 [검증 기록](docs/verification.md)에 있습니다.
 
 ## 첫 프로젝트
 

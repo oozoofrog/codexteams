@@ -13,6 +13,7 @@
 | `npm run pack:check` | exit 0. 패키지 구성 확인, 공개 배포 없음 |
 | `git diff --check` | 공백 오류 없음 |
 | 실제 Pi host 자동 테스트 | 격리된 설정에 로컬 패키지 등록 후 `help`, `status`, `add`, `profile`, `show` 실행. 상태·프로필 저장과 종료 후 잠금 해제 확인 |
+| GitHub URL 설치 안내 | 공개 저장소 URL로 실제 `install`, `list`, `help/status`, `update`, `remove` 통과. 별도 Pi 설정·인증 환경 변수 없는 프로세스 사용. 모델 실행 0회, 프로젝트 상태 생성 없음 |
 | 실제 Mac 설치 스크립트 | 임시 대상에 소스 복사, `npm ci`, 격리된 Pi 설정의 패키지 등록 완료. 실제 사용자의 Pi 설정은 변경하지 않음 |
 | 독립 코드 검토 | 현재 변경에 중대한 결함 없음. 별도 실행한 controller/runner 테스트 52개 통과. 계획 취소 중 추가 차단·취소 후 추가 허용·검증 실행 중 추가 허용도 확인 |
 
@@ -28,6 +29,8 @@
 ### 근거와 검증 경계
 
 전체 로그는 다음 폴더에 보존했다: [/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification](/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification). 주요 파일은 `baseline-check.log`, `planning-red.log`, `controller-green.log`, `intermediate-check-installer-failure.log`, `host-test-stdin-failure.log`, `final-check.log`, `macos-install.log`, `registered-host.jsonl`이다. 실패 기록을 삭제하지 않았다.
+
+README의 GitHub 직접 설치 절차는 `remote-install-readme.log`와 `remote-install-readme-summary.json`에 기록했다. 검증한 원격 소스는 `1c3ebff`의 코드이며 이후 변경은 설치 안내 문서다. 이 확인은 원격 설치본의 모델 worker 실행을 검증한 결과가 아니다.
 
 macOS CLI·프로세스 그룹·설치·상태 저장 검증을 실제로 실행했다. 대화형 TUI의 시각적 사용성, 실제 사용자의 Pi 등록·reload, 로그인 계정 모델 호출·entitlement·청구는 확인하지 않았다. 유료 모델 호출과 외부 게시를 하지 않았다. 병렬 worktree, 자동 수락, 자동 모델 배정과 Ultra 전략은 기존 후속 범위로 남긴다.
 
