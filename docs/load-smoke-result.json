@@ -1,0 +1,10 @@
+{
+  "errors": [],
+  "extensions": 1,
+  "commands": [
+    "teams"
+  ],
+  "tools": [
+    "codexteams_status"
+  ]
+}

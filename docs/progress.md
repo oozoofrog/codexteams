@@ -1,0 +1,24 @@
+# Implementation ledger — docs/plans/2026-11-01-pi-extension.md
+
+- 2026-11-01: User authorized detailed design and implementation start for a pure Pi extension.
+- Environment: Linux workspace; no tool can access the requested eyedisk/develop Mac path. Build source here and deliver a non-destructive Mac installer.
+- Public npm registry confirmed @earendil-works/pi-coding-agent 1.4.0. No live model call made.
+- Ruling: Implement v0.1 sequential writers and explicit user acceptance; parallel worktree integration and automatic acceptance are later milestones. This keeps the initial product truthful about verification and avoids shared-file races.
+- Pre-flight: planner -> controller passes validated PlannedTask; store owns ProjectState; runner returns WorkerResult; UI never mutates state directly.
+- Design review: accepted four findings — orphan-aware unclean recovery gate, exclusive/cancellable checks, revise needs_review via resume, attempt-bound verification and acceptance evidence. No background daemon added.
+- Task 1 RED: node --test tests/planning.test.ts tests/store.test.ts failed because both feature modules were not implemented.
+- Task 1 GREEN: 9 named planner/profile/store cases passed with --test-isolation=none; real Pi dependency type check passed.
+- Task 3 RED: controller/check-runner tests failed for missing modules before implementations.
+- Ruling: use Node test isolation=none so actual named cases are visible in this managed runtime. Production workers still run in separate processes.
+- Task 3 GREEN: 9 controller/check tests passed; checks use real /bin/sh subprocesses and cancellation.
+- Task 4 RED: extension tests failed before src/index.ts and UI formatter existed.
+- Task 4 GREEN: real Pi 1.4.0 loader registered teams and codexteams_status with zero errors; 4 host adapter tests and non-overwriting installer test passed.
+- Whole-branch review found ordinary Pi bash background descendants outside the worker group, check close-vs-exit hanging, incomplete nested state validation and acceptance while crash recovery is pending.
+- Final regression RED: five named root tests reproduced check pipe hanging, recovery acceptance bypass, masked persistence failure, missing live usage subtotal and malformed nested state acceptance.
+- Root fix pass GREEN: exit-triggered check cleanup, recovery-gated accept, preserved persistence failure, live partial usage and nested state validation passed 20 focused tests. Separate unfinished-attempt recovery test reproduced outer-status mismatch before correction.
+- Review scope rulings: live model entitlement/billing, actual Mac installation/TUI, Windows/escaped process containment and roadmap parallel/automatic acceptance remain unverified or deferred. These are documented product boundaries, not claimed completions. No minor findings deferred by review.
+- Task 2 native Bash RED: real Pi tool fixtures reproduced surviving background descendants and continuing after tool abort/timeout. GREEN: private worker guard keeps ordinary shells in the verified worker group and ends the full attempt on abort/explicit timeout. Real Pi guard loader also passes.
+- Worker guard ownership remains strict: private owner record and nonce, actual parent PID, and OS PGID matching the worker PID. Tests use real OS execution; failed ps lookup is never accepted as termination evidence.
+- Final integrated verification: npm run check exit 0, TypeScript pass, 74 tests passed, 0 failed, 0 skipped. Actual Pi main extension load has zero errors; pack dry-run passes with a writable temporary npm cache. No live model calls.
+- Final guard-focused independent review reported no remaining Important/Critical lifecycle or ownership findings. Source implementation is frozen for delivery; exact validation boundaries are in docs/verification.md.
+- Design now distinguishes implemented explicit profiles from future evidence-based routing and separates native Max effort from the unimplemented Ultra orchestration strategy.
