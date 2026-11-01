@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import extension from "../src/index.ts";
-import { formatBoard, formatTask } from "../src/ui/format.ts";
+import { formatBoard, formatTask, widgetLines } from "../src/ui/format.ts";
 import { TeamController } from "../src/core/controller.ts";
 import { ProjectStore } from "../src/core/store.ts";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -47,6 +47,32 @@ test("untrusted project cannot start a writing action", async t => {
   assert.match(h.notifications.join("\n"), /신뢰/);
 });
 
+test("handoff validates before store access and honors project trust", async t => {
+  const h = harness(t, false); h.ctx.hasUI = false;
+  const root = realpathSync(h.root), file = join(root, "request.json");
+  const request = { schemaVersion: 1, requestId: "trust-1", projectRoot: root, source: { kind: "codex", checkpoint: "stopped", stopped: true }, goal: "goal", task: { title: "task", description: "desc", role: "developer", acceptance: ["done"] }, context: { summary: "", completed: [], constraints: [], files: [], evidence: [] } };
+  writeFileSync(file, JSON.stringify(request));
+  await h.command(`handoff ${JSON.stringify(file)}`);
+  assert.equal(JSON.parse(h.messages.at(-1)!).status, "rejected");
+  assert.match(JSON.parse(h.messages.at(-1)!).error, /신뢰/);
+  assert.equal(existsSync(join(root, ".codexteams")), false);
+  writeFileSync(file, "invalid json"); await h.command(`handoff ${JSON.stringify(file)}`);
+  assert.equal(JSON.parse(h.messages.at(-1)!).status, "rejected");
+  assert.equal(existsSync(join(root, ".codexteams")), false);
+});
+
+test("handoff TUI leaves cancel responsive while execution is pending", async t => {
+  const h = harness(t); const root = realpathSync(h.root), file = join(root, "request.json");
+  writeFileSync(file, JSON.stringify({ schemaVersion: 1, requestId: "ui-1", projectRoot: root, source: { kind: "codex", checkpoint: "stopped", stopped: true }, goal: "goal", task: { title: "task", description: "desc", role: "developer", acceptance: ["done"] }, context: { summary: "", completed: [], constraints: [], files: [], evidence: [] } }));
+  let finish!: (v: Record<string, unknown>) => void;
+  t.mock.method(TeamController.prototype, "handoff", () => new Promise(resolve => { finish = resolve; }));
+  let cancelled = false; t.mock.method(TeamController.prototype, "cancel", async () => { cancelled = true; });
+  await h.command(`handoff ${JSON.stringify(file)}`); assert.equal(typeof finish, "function");
+  await h.command("cancel"); assert.equal(cancelled, true);
+  finish({ status: "interrupted" }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(JSON.parse(h.messages.at(-1)!).status, "interrupted");
+});
+
 test("explicit add/profile writes durable tasks without calling a model", async t => {
   const h = harness(t);
   await h.command("add designer 화면을 개선해 줘");
@@ -56,6 +82,16 @@ test("explicit add/profile writes durable tasks without calling a model", async 
   assert.equal(state.profiles.designer.effort, "high");
   assert.match(formatBoard(state, "준비"), /화면을 개선/);
   assert.match(formatTask(state.tasks[0]), /검증/);
+});
+
+test("board, task and widget distinguish requested and observed models", async t => {
+  const h = harness(t); await h.command("add developer model visibility");
+  await h.events.get("session_shutdown")?.({ reason: "quit" }, h.ctx);
+  const store = ProjectStore.open(h.root);
+  store.update(state => { state.tasks[0].attempts.push({ id: "attempt-1", sessionId: "session-1", profile: state.profiles.developer, startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), outcome: "success", effectiveModels: ["provider/observed"], text: "done", usage: { input: null, output: null, cacheRead: null, cacheWrite: null, reasoning: null, totalTokens: null, costUsd: null, responses: 0, completeness: "unknown" }, logFile: "logs/attempt-1.jsonl" }); state.tasks[0].status = "needs_review"; });
+  const state = store.snapshot(); store.close();
+  for (const output of [formatBoard(state), formatTask(state.tasks[0]), widgetLines(state, "ready").join("\n")]) { assert.match(output, /요청/); assert.match(output, /provider\/observed/); }
+  assert.match(formatBoard(state), /planner.*확인 대기/);
 });
 
 test("ultra is rejected as native effort and status remains unknown before calls", async t => {

@@ -1,5 +1,28 @@
 # codexteams 검증 기록
 
+## 0.3.0 Codex 인계와 실제 Teams 자체 개선 — 2026-11-01
+
+구현은 `/Users/oozoofrog/.codex/worktrees/codex-teams-handoff/codexteams`에 있다. 원본 checkout의 commit `29405bc`와 추적 파일은 유지했다. 현재 Terminal은 검증된 새 소스의 확장을 명시적으로 로드한다.
+
+| 범위 | 확인한 결과 |
+|---|---|
+| 실제 Teams 계획 | `openai-codex/gpt-6-astra`, high. 실제 반환 모델 식별자가 요청과 일치했다. |
+| 실제 Teams 구현·수정 | 같은 작업·Pi worker 세션에서 `openai-codex/gpt-6.1-terra`, high로 4회 실행했다. 첫 tests-only 결과는 미완료로 보존하고 Sol 검토를 반영해 재개했다. |
+| 실제 Teams 독립 검토 | `openai-codex/gpt-6.1-sol`, high로 4회 검토했다. 응답 검증·저장 상태 검증·동시 요청·ENOENT 경계 결함을 수정한 후 마지막 재검토에서 차단 항목이 없음을 확인했다. |
+| 최종 자동 검사 | TypeScript와 전체 **160/160**, 실패·skip 0. 실제 Pi 로더, package dry-run, diff whitespace 검사 통과. |
+| 실제 controller check | Codex가 Terminal의 `/teams check`로 핵심 회귀 **9/9**를 실행했다. exit 0과 마지막 Terra attempt에 연결된 check 기록을 확인했다. |
+| 최소 Node 설치 환경 | Node **22.19.0**에서 실제 tarball을 격리된 global prefix에 설치했다. 물리 Pi peer가 없고 Pi 실행 경로가 없는 환경에서 absent-state 비생성과 저장 결과 조회가 통과했다. 마지막 ENOENT 수정 후 다시 패키징해 확인했다. |
+| 실제 계정 인계 | 별도 읽기 전용 fixture에서 새 CLI로 Codex 요청을 제출했다. Sol이 실제 `read` 도구로 README의 prompt에 없던 값을 읽고 반환했다. 재제출·Pi 없는 조회 후에도 attempt는 **1개**였다. |
+| 수락 경계 | 제품 작업과 실제 계정 fixture는 `needs_review`로 남았다. 자동 수락은 하지 않았다. 검토 PASS와 사용자 수락을 구분한다. |
+
+실제 모델 사용은 Pi의 공개 응답에서 받은 `effectiveModels`와 usage 기록으로 확인했다. 이는 서버 구현의 별도 attestation이나 청구서가 아니다. 요청한 Normal 서비스 모드의 provider 실행은 별도로 검증하지 않았다.
+
+수정 전 실패는 보존했다. 대표 근거는 `/tmp/codexteams-handoff-red.log`, `review2-red.log`, `enoent-red.log`이며 각각 전체 경로의 공통 접두사는 `/tmp/codexteams-handoff-`다. 마지막 검증 로그는 `/tmp/codexteams-handoff-enoent-final-{focused,typecheck,check,load,pack}.log`다. Codex가 손상된 source root의 조회 우회를 별도 fixture로 재현한 뒤 수정 후 store·조회·CLI 거부 회귀를 확인했다.
+
+지속 보관 근거는 `/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-selfhost-0.3.0/`에 있다. `installed-node22-final-result.json`은 최종 설치 검사, `live-verification-result.json`은 실제 계정 인계 검사다. 자동 통합 검사의 local provider fixture와 실제 계정 실행을 구분한다.
+
+요청 파일은 호출자가 관리하는 디렉터리에 둔다. 최종 파일의 nofollow·descriptor identity·bounded read 검사와 CLI→Pi digest 연결을 제공한다. 부모 디렉터리의 원자적 open이나 악성 동일 사용자 프로세스에 대한 OS sandbox는 제공하지 않는다. `source.stopped`는 발신자 선언이며 외부 Codex 프로세스의 정지를 증명하지 않는다. 상세 계약과 사용법은 `docs/design/2026-11-01-codex-handoff.md`, `docs/codex-handoff.md`에 있다.
+
 ## 0.2.1 resume picker — 2026-11-01
 
 - `/teams resume`는 Pi의 선택 목록을 연다. 실패·중단·검토 대기 작업만 표시하고 제목·상태·역할·보조 ID로 구분한다. ↑/↓·Enter·Esc로 선택·재개·취소한다. 직접 ID와 수정 지시를 지정하는 기존 방식은 유지한다.

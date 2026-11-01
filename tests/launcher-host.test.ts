@@ -119,4 +119,21 @@ test("launcher drives real Pi planning and guarded worker execution against a lo
   assert.equal(finalized(reopened.stdout).some(content => content.includes("Create the synthetic proof")), true);
   assert.equal(requests.length, 3);
   assert.equal(readFileSync(join(project, ".codexteams", "state.json"), "utf8"), before);
+
+  const packet = { schemaVersion: 1, requestId: "installed-1", projectRoot: realpathSync(project), source: { kind: "codex", checkpoint: "stopped", stopped: true }, goal: "Local handoff fixture", task: { title: "Handoff", description: "Run fixture", role: "developer", acceptance: ["Fixture finishes"] }, context: { summary: "local only", completed: [], constraints: [], files: [], evidence: [] } };
+  const packetPath = join(root, "request.json"); writeFileSync(packetPath, JSON.stringify(packet));
+  const command = (args: string[]) => {
+    const child = promisify(execFile)(process.execPath, [join(prefix, "bin", "codexteams"), ...args], { cwd: project, env, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
+    child.child.stdin?.end(); return child;
+  };
+  const submission = await command(["--pi", resolve("node_modules/.bin/pi"), "--handoff", packetPath]);
+  const handoff = JSON.parse(submission.stdout);
+  assert.equal(handoff.status, "needs_review"); assert.equal(handoff.requestId, "installed-1");
+  assert.equal(handoff.attempts.length, 1); assert.equal(requests.length, 5);
+  const saved = readFileSync(join(project, ".codexteams", "state.json"), "utf8");
+  const lookup = await command(["--handoff-result", "installed-1"]);
+  assert.equal(JSON.parse(lookup.stdout).status, "needs_review");
+  assert.equal(readFileSync(join(project, ".codexteams", "state.json"), "utf8"), saved);
+  const duplicate = await command(["--pi", resolve("node_modules/.bin/pi"), "--handoff", packetPath]);
+  assert.equal(JSON.parse(duplicate.stdout).status, "needs_review"); assert.equal(requests.length, 5);
 });

@@ -4,6 +4,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { TeamController } from "./core/controller.ts";
 import { ProjectStore } from "./core/store.ts";
+import { handoffResult, readRequest, requestDigest } from "./core/handoff.mjs";
 import { parseProfile, parseRole } from "./core/profiles.ts";
 import { runPiWorker } from "./runtime/pi-runner.ts";
 import { formatBoard, formatTask, resumeCandidates, widgetLines } from "./ui/format.ts";
@@ -11,6 +12,8 @@ import type { ModelProfile, TaskRole } from "./core/types.ts";
 
 const HELP = `## codexteams
 
+\`/teams handoff <JSON 경로>\` — 인계 작업 실행
+\`/teams handoff-result <id>\` — 인계 결과 조회
 \`/teams launch <목표>\` — 새 프로젝트 계획을 만들고 준비된 작업 실행
 \`/teams start <목표>\` — 프로젝트를 읽고 작업 계획 생성
 \`/teams run [id]\` — 준비된 작업 실행
@@ -87,6 +90,37 @@ export default function codexteams(pi: ExtensionAPI): void {
       context = ctx;
       const [action, rest] = splitArgument(args);
       try {
+        if (action === "handoff-result") {
+          const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
+          pi.sendMessage({ customType: "codexteams.handoff.result", content: JSON.stringify(handoffResult(state, rest.trim(), realpathSync(ctx.cwd))), display: true }, { triggerTurn: false });
+          return;
+        }
+        if (action === "handoff") {
+          let requestId: string | null = null;
+          const run = async () => {
+            try {
+              const match = /^("(?:\\.|[^"\\])*")(?:\s+([a-f0-9]{64}))?$/.exec(rest.trim());
+              if (!match) throw new Error("Request path must be a JSON string.");
+              const path: unknown = JSON.parse(match[1]);
+              if (typeof path !== "string") throw new Error("Request path must be a JSON string.");
+              const request = readRequest(path, ctx.cwd);
+              requestId = request.requestId;
+              if (match[2] && match[2] !== requestDigest(request)) throw new Error("Request changed after CLI validation.");
+              const team = await getController(ctx);
+              return await team.handoff(request);
+            } catch (error) {
+              return { schemaVersion: 1, kind: "codexteams.handoff.result", requestId, status: "rejected", task: null, error: error instanceof Error ? error.message : String(error), limitations: ["Request did not complete."] };
+            }
+          };
+          const deliver = async () => {
+            const result = await run();
+            pi.sendMessage({ customType: "codexteams.handoff.result", content: JSON.stringify(result), display: true }, { triggerTurn: false });
+            showWidget();
+          };
+          if (ctx.hasUI) { void deliver().catch(error => notify(ctx, String(error), "error")); showWidget(); }
+          else await deliver();
+          return;
+        }
         if (!action || action === "status" || (action === "launch" && !rest.trim())) {
           const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
           display(state ? formatBoard(state, controller?.currentActivity) : HELP); return;

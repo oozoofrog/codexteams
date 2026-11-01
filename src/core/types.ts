@@ -98,7 +98,26 @@ export interface VerificationCheck {
   status: "running" | "passed" | "failed" | "interrupted";
 }
 
+export interface WorkspaceObservation {
+  at: string;
+  attemptId: string;
+  phase: "before" | "after";
+  status: "available" | "unavailable" | "truncated";
+  gitStatus: string;
+  diffSummary: string;
+  error?: string;
+}
+
+export interface HandoffRecord {
+  request: import("./handoff.mjs").HandoffRequest;
+  digest: string;
+  submittedAt: string;
+  observations: WorkspaceObservation[];
+  errors: string[];
+}
+
 export interface Task extends PlannedTask {
+  handoff?: HandoffRecord;
   status: TaskStatus;
   createdAt: string;
   updatedAt: string;
