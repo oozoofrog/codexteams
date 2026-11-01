@@ -69,7 +69,7 @@ test('help and version do not invoke Pi even with invalid Pi selection', async t
   for (const args of [['--help'], ['-h'], ['--version'], ['-v']]) {
     const result = await invoke(args, f.cwd, { ...f.env, CODEXTEAMS_PI: '/missing/pi' });
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, args[0].includes('version') || args[0] === '-v' ? /0\.2\.0/ : /Usage:.*codexteams/s);
+    assert.match(result.stdout, args[0].includes('version') || args[0] === '-v' ? /0\.2\.1/ : /Usage:.*codexteams/s);
   }
   assert.deepEqual(await f.records(), []);
 });

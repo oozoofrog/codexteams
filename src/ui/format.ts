@@ -5,6 +5,13 @@ const states: Record<TaskStatus, string> = { queued: "대기", running: "진행"
 const cell = (text: string) => text.replaceAll("|", "\\|").replace(/[\r\n]+/g, " ");
 const number = (value: number | null) => value === null ? "미확인" : value.toLocaleString("ko-KR");
 
+export function resumeCandidates(state: ProjectState): { id: string; option: string }[] {
+  return state.tasks.filter(task => ["failed", "interrupted", "needs_review"].includes(task.status)).map(task => ({
+    id: task.id,
+    option: `${task.title.replace(/[\r\n]+/g, " ")} · ${states[task.status]} · ${task.role} · ID: ${task.id}`,
+  }));
+}
+
 export function projectUsage(state: ProjectState): UsageSummary {
   return combineUsage([...state.planningAttempts, ...state.tasks.flatMap(task => task.attempts)].map(attempt => attempt.usage));
 }
@@ -21,7 +28,7 @@ export function formatBoard(state: ProjectState, activity = "준비"): string {
     return `| ${task.id} | ${states[task.status]} | ${task.role} | ${cell(task.title)} | ${cell(profile.model)} / ${profile.effort} |`;
   });
   const attempts = state.planningAttempts.length + state.tasks.reduce((sum, task) => sum + task.attempts.length, 0);
-  return ["## codexteams", "", `**목표:** ${state.goal || "아직 없음"}`, "", `**상태:** ${activity}`, ...(state.recoveryRequired ? ["", `**복구 필요:** ${state.recoveryReason || "/teams recover"}`] : []), "", "| 작업 | 상태 | 담당 | 내용 | 최근 실행 / 추론 |", "|---|---|---|---|---|", ...rows, ...(rows.length ? [] : ["| — | — | — | 등록된 작업 없음 | — |"]), "", formatUsage(projectUsage(state), attempts > 0), "", "작업 상세: `/teams show <id>` · 실행: `/teams run` · 수정: `/teams resume <id> <지시>`", "검증: `/teams check <id> <명령>` · 수락: `/teams accept <id>` · 중단: `/teams cancel`"].join("\n");
+  return ["## codexteams", "", `**목표:** ${state.goal || "아직 없음"}`, "", `**상태:** ${activity}`, ...(state.recoveryRequired ? ["", `**복구 필요:** ${state.recoveryReason || "/teams recover"}`] : []), "", "| 작업 | 상태 | 담당 | 내용 | 최근 실행 / 추론 |", "|---|---|---|---|---|", ...rows, ...(rows.length ? [] : ["| — | — | — | 등록된 작업 없음 | — |"]), "", formatUsage(projectUsage(state), attempts > 0), "", "작업 상세: `/teams show <id>` · 실행: `/teams run` · 이어가기: `/teams resume` · 수정: `/teams resume <id> <지시>`", "검증: `/teams check <id> <명령>` · 수락: `/teams accept <id>` · 중단: `/teams cancel`"].join("\n");
 }
 
 export function formatTask(task: Task): string {

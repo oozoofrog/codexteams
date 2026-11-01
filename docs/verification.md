@@ -1,5 +1,13 @@
 # codexteams 검증 기록
 
+## 0.2.1 resume picker — 2026-11-01
+
+- `/teams resume`는 Pi의 선택 목록을 연다. 실패·중단·검토 대기 작업만 표시하고 제목·상태·역할·보조 ID로 구분한다. ↑/↓·Enter·Esc로 선택·재개·취소한다. 직접 ID와 수정 지시를 지정하는 기존 방식은 유지한다.
+- TypeScript와 전체 테스트 **138개 통과 / 실패 0 / 건너뜀 0**. 새 picker 회귀 21개를 포함한 관련 테스트 32개 통과. 실제 Pi 로더와 패키지 구성 검사도 통과했다.
+- 빈 상태·단일 후보·같은 제목·선택 취소·비대화형 목록·신뢰/실행/복구/소유권·선택 중 세션/프로젝트/상태 변경을 검증했다. 독립 검토에서 중대한 picker 결함은 보고되지 않았다. 버전 증가 후 남아 있던 launcher의 0.2.0 기대값을 0.2.1로 수정하고 전체 검사를 통과했다.
+- 실제 Pi TTY에서 합성 실패 작업 두 개의 목록을 열고 두 번째 작업을 선택했다. 선택한 designer 역할에만 지정한 존재하지 않는 모델의 preflight 오류로 정확한 대상 라우팅을 확인했다. 다시 목록을 열어 Esc로 취소하고 Ctrl-D로 정상 종료했다. 상태 파일은 전후 바이트가 같고 소유 잠금은 해제됐다. 이 TTY 검증은 실제 모델 재개 실행을 포함하지 않는다.
+- 증거: [/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification/resume-picker-0.2.1](/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification/resume-picker-0.2.1). RED, 중간 버전 실패, 최종 GREEN, TTY 원문·읽기용 기록과 요약을 보존했다.
+
 ## 0.2.0 launcher — 2026-11-01
 
 기준 커밋 `7c13df9`에서 실행 명령, 계획·실행 연결과 설치 안내를 추가했다. 환경은 macOS 27.2, Node v26.12.1, Pi 1.4.0이다.

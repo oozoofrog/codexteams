@@ -6,7 +6,7 @@ import { TeamController } from "./core/controller.ts";
 import { ProjectStore } from "./core/store.ts";
 import { parseProfile, parseRole } from "./core/profiles.ts";
 import { runPiWorker } from "./runtime/pi-runner.ts";
-import { formatBoard, formatTask, widgetLines } from "./ui/format.ts";
+import { formatBoard, formatTask, resumeCandidates, widgetLines } from "./ui/format.ts";
 import type { ModelProfile, TaskRole } from "./core/types.ts";
 
 const HELP = `## codexteams
@@ -16,7 +16,8 @@ const HELP = `## codexteams
 \`/teams run [id]\` — 준비된 작업 실행
 \`/teams add <developer|designer|reviewer> <내용>\` — 후속 작업 추가
 \`/teams show <id>\` — 결과와 검증 기록
-\`/teams resume <id> [수정 지시]\` — 중단·실패·검토 대기 작업 이어가기
+\`/teams resume\` — 중단·실패·검토 대기 작업을 목록에서 선택
+\`/teams resume <id> [수정 지시]\` — 지정한 작업 이어가기
 \`/teams check <id> <명령>\` — 직접 지정한 검증 실행
 \`/teams accept <id>\` — 결과를 검토하고 수락
 \`/teams profile <role> <provider/model> <low|medium|high|xhigh|max>\` — 이후 실행 설정
@@ -100,11 +101,16 @@ export default function codexteams(pi: ExtensionAPI): void {
         if (action === "launch") {
           const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
           if (state && (state.goal || state.tasks.length || state.planningAttempts.length)) {
-            display(`${formatBoard(state, controller?.currentActivity)}\n\n기존 프로젝트를 표시했습니다. /teams run, /teams resume <id> 또는 /teams recover로 이어가세요.`);
+            display(`${formatBoard(state, controller?.currentActivity)}\n\n기존 프로젝트를 표시했습니다. /teams run, /teams resume 또는 /teams recover로 이어가세요.`);
             return;
           }
         }
         if (!["launch", "start", "add", "run", "resume", "check", "accept", "profile", "cancel", "recover"].includes(action)) throw new Error("알 수 없는 명령입니다. /teams help");
+        if (action === "resume" && !rest.trim()) {
+          if (!ctx.isProjectTrusted()) throw new Error("Pi에서 이 프로젝트를 신뢰한 뒤 팀 작업을 시작하세요.");
+          const saved = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
+          if (!saved?.tasks.length) { notify(ctx, "재개할 작업이 없습니다. /teams status에서 작업을 확인하세요."); return; }
+        }
         const team = await getController(ctx);
         switch (action) {
           case "launch": await operation(team.launch(rest), ctx, summary => `실행 ${summary.executed.length}개 · 검토 대기 ${summary.waitingReview.length}개 · 남은 대기 ${summary.blocked.length}개. /teams status`); break;
@@ -116,7 +122,37 @@ export default function codexteams(pi: ExtensionAPI): void {
           }
           case "run": await operation(team.run(rest.trim() || undefined), ctx, summary => `실행 ${summary.executed.length}개 · 검토 대기 ${summary.waitingReview.length}개 · 남은 대기 ${summary.blocked.length}개. /teams status`); break;
           case "resume": {
-            const [id, instruction] = splitArgument(rest); await operation(team.resume(id, instruction), ctx, () => `${id} 실행이 끝났습니다. 결과를 확인하세요.`); break;
+            let [id, instruction] = splitArgument(rest);
+            if (!id) {
+              const ensureReady = () => {
+                if (!ctx.isProjectTrusted()) throw new Error("Pi에서 이 프로젝트를 신뢰한 뒤 팀 작업을 시작하세요.");
+                if (team.busy) throw new Error("이미 작업 또는 검증이 실행 중입니다. /teams cancel로 중단할 수 있습니다.");
+                const state = team.snapshot();
+                if (state.recoveryRequired) throw new Error(state.recoveryReason || "프로젝트 복구 확인이 필요합니다. /teams recover");
+                return state;
+              };
+              const state = ensureReady();
+              const candidates = resumeCandidates(state);
+              if (!candidates.length) { notify(ctx, "재개할 작업이 없습니다. /teams status에서 작업을 확인하세요."); break; }
+              if (!ctx.hasUI) {
+                display(["재개할 작업", ...candidates.map(candidate => `- ${candidate.option}`), "", "작업 ID를 지정하세요: /teams resume <id> [수정 지시]"].join("\n"));
+                break;
+              }
+              const startedIn = generation;
+              const root = team.store.root;
+              const selection = await ctx.ui.select("이어갈 작업 선택", candidates.map(candidate => candidate.option));
+              if (selection === undefined) break;
+              if (startedIn !== generation || controller !== team || realpathSync(ctx.cwd) !== root || !context || realpathSync(context.cwd) !== root) throw new Error("프로젝트 또는 세션이 변경되었습니다. /teams resume로 다시 선택하세요.");
+              const candidate = candidates.find(candidate => candidate.option === selection);
+              if (!candidate) throw new Error("선택한 작업을 확인할 수 없습니다. /teams resume로 다시 선택하세요.");
+              const current = ensureReady();
+              const previousTask = state.tasks.find(task => task.id === candidate.id)!;
+              const selectedTask = current.tasks.find(task => task.id === candidate.id);
+              if (!selectedTask || selectedTask.status !== previousTask.status || selectedTask.updatedAt !== previousTask.updatedAt || !resumeCandidates(current).some(task => task.id === candidate.id)) throw new Error("작업 상태가 변경되었습니다. /teams resume로 다시 선택하세요.");
+              id = candidate.id;
+              instruction = "";
+            }
+            await operation(team.resume(id, instruction), ctx, () => `${id} 실행이 끝났습니다. 결과를 확인하세요.`); break;
           }
           case "check": {
             const [id, command] = splitArgument(rest); await operation(team.check(id, command), ctx, () => `${id} 검증 기록을 저장했습니다. /teams show ${id}`); break;
@@ -131,7 +167,7 @@ export default function codexteams(pi: ExtensionAPI): void {
             if (!team.snapshot().recoveryRequired) { notify(ctx, "복구할 비정상 종료 기록이 없습니다."); break; }
             if (!ctx.hasUI) throw new Error("복구 확인은 Pi 대화형 화면에서 실행하세요.");
             const confirmed = await ctx.ui.confirm("중단된 작업 복구", "이전 Pi 작업과 검증 프로세스가 종료됐고, 프로젝트 파일의 부분 변경을 확인했나요?");
-            if (confirmed) { team.recover(true); notify(ctx, "복구 확인 완료. /teams resume <id>로 이어가세요."); }
+            if (confirmed) { team.recover(true); notify(ctx, "복구 확인 완료. /teams resume로 이어가세요."); }
             break;
           }
         }
@@ -153,7 +189,7 @@ export default function codexteams(pi: ExtensionAPI): void {
     },
   });
 
-  pi.on("session_start", async (_event, ctx) => { context = ctx; });
+  pi.on("session_start", async (_event, ctx) => { generation++; context = ctx; });
   pi.on("session_shutdown", async () => {
     generation++;
     const current = controller; controller = undefined;
