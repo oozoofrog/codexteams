@@ -40,6 +40,8 @@ export class TeamController {
   private options: ControllerOptions;
   private active: { abort: AbortController; done: Promise<unknown>; kind: "planning" | "execution" } | undefined;
   private closed = false;
+  private shutdownPending: Promise<void> | undefined;
+  private shutdownComplete = false;
   private activity = "준비";
 
   constructor(store: ProjectStore, options: ControllerOptions) { this.store = store; this.options = options; }
@@ -335,7 +337,10 @@ export class TeamController {
   }
 
   async shutdown(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true; await this.cancel(); this.store.close();
+    if (this.shutdownComplete) return;
+    if (this.shutdownPending) return this.shutdownPending;
+    this.closed = true;
+    this.shutdownPending = (async () => { await this.cancel(); this.store.close(); this.shutdownComplete = true; })();
+    try { await this.shutdownPending; } finally { this.shutdownPending = undefined; }
   }
 }

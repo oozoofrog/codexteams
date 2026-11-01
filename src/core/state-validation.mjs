@@ -1,4 +1,5 @@
 import { normalizeRequest, requestDigest } from './handoff.mjs';
+import { isAbsolute, normalize, extname, join, sep } from 'node:path';
 
 const statuses = new Set(['queued', 'running', 'needs_review', 'completed', 'failed', 'interrupted', 'cancelled']);
 const validDate = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
@@ -52,6 +53,20 @@ export function validateState(state, root) {
     if (['needs_review', 'completed'].includes(task.status) && (!latest || latest.outcome !== 'success' || !latest.endedAt)) throw new Error('검토·완료 상태에 성공한 실행 기록이 없습니다.');
     if (task.status === 'completed' && (!validDate(task.acceptedAt) || task.acceptanceSource !== 'user' || task.acceptedAttemptId !== latest.id || !Array.isArray(task.acceptedCheckIds) || task.acceptedCheckIds.some(id => !task.checks.some(c => c.id === id && c.attemptId === latest.id)))) throw new Error('작업 수락 증거 state가 일치하지 않습니다.');
     ids.add(task.id);
+  }
+  if (state.navigation !== undefined) {
+    const nav = state.navigation;
+    const workerDir = join(root, '.codexteams', 'sessions') + sep;
+    const validPath = p => typeof p === 'string' && isAbsolute(p) && normalize(p) === p && extname(p) === '.jsonl' && !p.includes('\0') && !p.startsWith(workerDir);
+    if (!nav || !nav.root || !validId(nav.root.id) || !validPath(nav.root.file) || !Array.isArray(nav.views)) throw new Error('손상된 탐색 state입니다.');
+    const sessions = new Set([nav.root.id]), files = new Set([nav.root.file]), targets = new Set();
+    for (const view of nav.views) {
+      const target = view?.kind === 'task' ? state.tasks.find(t => t.id === view.targetId) : view?.kind === 'planning' ? state.planningAttempts.find(a => a.id === view.targetId) : undefined;
+      const worker = view?.kind === 'task' ? target?.attempts?.some(a => a.sessionId === view.workerSessionId) : target?.sessionId === view?.workerSessionId;
+      const key = `${view?.kind}:${view?.targetId}`;
+      if (!target || !validId(view.sessionId) || !validPath(view.file) || view.parentSession !== nav.root.file || sessions.has(view.sessionId) || files.has(view.file) || targets.has(key) || (view.workerSessionId !== undefined && (!validId(view.workerSessionId) || !worker))) throw new Error('손상된 조회 세션 state입니다.');
+      sessions.add(view.sessionId); files.add(view.file); targets.add(key);
+    }
   }
   for (const task of state.tasks) if (task.dependsOn.some(id => !ids.has(id))) throw new Error('state 의존 작업이 없습니다.');
   const byId = new Map(state.tasks.map(task => [task.id, task])), complete = new Set(), active = new Set();

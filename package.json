@@ -1,6 +1,6 @@
 {
   "name": "codexteams",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Project teams, explicit model routing, durable tasks and usage tracking inside Pi.",
   "type": "module",
   "private": true,

@@ -129,6 +129,10 @@ export interface Task extends PlannedTask {
   acceptedCheckIds?: string[];
 }
 
+export interface NavigationRoot { id: string; file: string }
+export interface NavigationView { kind: "task" | "planning"; targetId: string; sessionId: string; file: string; parentSession: string; workerSessionId?: string }
+export interface NavigationState { root: NavigationRoot; views: NavigationView[] }
+
 export interface ProjectState {
   schemaVersion: 1;
   id: string;
@@ -140,6 +144,7 @@ export interface ProjectState {
   profiles: Record<Role, ModelProfile>;
   tasks: Task[];
   planningAttempts: Attempt[];
+  navigation?: NavigationState;
   recoveryRequired?: boolean;
   recoveryReason?: string;
 }

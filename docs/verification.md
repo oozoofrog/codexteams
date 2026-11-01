@@ -1,8 +1,31 @@
 # codexteams 검증 기록
 
+## 0.4.0 팀·작업 세션 탐색 — 2026-11-02
+
+구현 소스는 `/Users/oozoofrog/.codex/worktrees/teams-session-navigation/codexteams`다. 최종 제품·테스트 파일60개의 hash를 `terra6-code-sha256.json`에 고정했다. 이후 실제 화면 검증에서도60개 파일이 같았다. 독립 Sol 재검토3은 **PASS**이며 필수 코드 수정은 남지 않았다. 작업의 `needs_review`와 사용자 수락은 별개로 유지한다.
+
+| 범위 | 확인한 결과 |
+|---|---|
+| 팀·작업 탐색 | 명시적인 팀 행과 계획·작업 자식 행, 상태·모델·실행 이력, 선택·취소·열기·팀 복귀. 긴 경로는 좌우로 확인하고 목록은 높이가 제한된 overlay에서 이동한다. |
+| 실제 모델 | 최초 계획은 `openai-codex/gpt-6-astra / high`. 구현은 정확한 `gpt-6.1-terra / high`, 독립 검토는 `gpt-6.1-sol / high`. 사용자 재로그인 뒤 후속 실행은 현재 `openai` ChatGPT 구독 OAuth로 명시적으로 연결했다. 과거 legacy provider receipt와 실패를 보존했다. |
+| 최종 자동 검사 | TypeScript 및 **184/184**, 실패·skip0. 관련 회귀 **17/17**, Pi 확장 로더와 package dry-run 통과. |
+| 실제 Pi RPC·SDK | 별도 module graph를 거치는 pending worker/check의 new·resume·fork, 같은 root와 연결 root, 새 binding과 registry, readonly clone/fork, quit·reload 정리를 확인했다. SDK의 모의 UI는 실제 Terminal 화면 증거로 분류하지 않는다. |
+| 최소 Node 설치본 | Node **22.19.0**의 격리 tarball 설치와 standalone `handoff-result` 통과. Pi peer·실행 파일 없이 조회한다. Root의 별도 설치 확인은 실제 SDK navigation metadata를 가진 state도 읽었다. |
+| 현재 Pi 적용 | 사용자의 기존 **PID31653**, Terminal 창6565에서 프로젝트 package filter와 native `/reload`로0.4.0을 읽었다. 추가 대화형 Pi를 열지 않았다. 전후 PID·global settings hash가 같고 `.pi/git` 설치도 발생하지 않았다. |
+| 현재 Pi의 실제 실행 유지 | `/teams check`에서 핵심 회귀4개를 실행하고 gate를 기다리는 동안 조회 세션과 팀 root를 오갔다. check ID·PID92968·잠금이 유지됐고 gate 해제 후 **4/4, exit0**으로 완료됐다. 이 check는 최종 Terra attempt6에 연결됐다. |
+| 원본·추론·수락 경계 | 위 화면 이동 전후 원본 Sol worker JSONL의 bytes·inode·mtime이 같았다. native root·조회 파일의 assistant 턴은0개였고 작업 시도 수는 `[6,3]`으로 유지됐다. 자동 재개·수락은 없었다. 실제 검토 worker의 정상 append는 별도로 prefix 보존을 확인했다. |
+
+최종 검토 전의 실제 Terminal 검증은 held local protocol worker를 사용했다. 원본 bytes/hash·inode·mtime, PID·시도·잠금을 고정한 채 task view·Esc·native resume·연결 B팀·B의 정확한 parent·A팀 복귀를 확인했다. 이 fixture는 `localfixture/session-nav-proof`이며 AI 추론을 하지 않는다. 실제 Astra/Terra/Sol 개발과 구분한다. 사용자의 단일 터미널 요청 뒤에는 현재 Pi의 reload와 실제 controller check로 마지막 화면을 확인했다.
+
+실패를 보존했다. 첫 미완료 반환, review1·review2 FAIL, legacy quota 실패와 새 RED fixture의120초 timeout이 포함된다. timeout은 fixture의 누락된 outcome·정리 경로를 보완하고 제한 시간 안에 종료되는 RED로 다시 확인했다. worker guard는 약화하지 않았다. stale registry 테스트의 폐기된 알림 단언은 production registry 결함의 증거로 주장하지 않는다.
+
+현재 host는 일반 `pi`의 프로젝트 발견 모드다. 실행 중 다른 root로 떠나는 전환은 문서화한 안전 제한을 따른다. 전용 launcher의 검증된 absolute `-e`·discovery 비활성화 구성과 구분한다. 현재 세션의 프로젝트 신뢰만 사용했으며 요청한 Normal provider 실행 등급이나 서버 내부 모델 attestation은 확인하지 않았다.
+
+지속 보관 근거: `/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-sessions-0.4.0/`. 주요 파일은 `review3-result.md`, `terra6-code-sha256.json`, `single-terminal-final-runtime.json`, `single-terminal-check-in-view.json`, `single-terminal-controller-check.log`다. 자동 검사 전체 로그는 `logs/codexteams-sessions-rework4-*-final.log`에 있다. 프로젝트 실행 설정은 `.pi/settings.json`이며 전역 설치를 교체하지 않는다.
+
 ## 0.3.0 Codex 인계와 실제 Teams 자체 개선 — 2026-11-01
 
-구현은 `/Users/oozoofrog/.codex/worktrees/codex-teams-handoff/codexteams`에 있다. 원본 checkout의 commit `29405bc`와 추적 파일은 유지했다. 현재 Terminal은 검증된 새 소스의 확장을 명시적으로 로드한다.
+구현은 `/Users/oozoofrog/.codex/worktrees/codex-teams-handoff/codexteams`에 있다. 원본 checkout의 commit `29405bc`와 추적 파일은 유지했다. 당시 Terminal은 검증된 새 소스의 확장을 명시적으로 로드했다.
 
 | 범위 | 확인한 결과 |
 |---|---|

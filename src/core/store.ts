@@ -132,12 +132,11 @@ export class ProjectStore {
 
   close(): void {
     if (this.closed) return;
-    try {
-      const lockPath = join(this.directory, "lock.json"); noSymlink(lockPath);
-      if (existsSync(lockPath)) {
-        const current = JSON.parse(readFileSync(lockPath, "utf8")) as Lock;
-        if (current.nonce === this.lock.nonce) unlinkSync(lockPath);
-      }
-    } finally { this.closed = true; }
+    const lockPath = join(this.directory, "lock.json"); noSymlink(lockPath);
+    if (existsSync(lockPath)) {
+      const current = JSON.parse(readFileSync(lockPath, "utf8")) as Lock;
+      if (current.nonce === this.lock.nonce) unlinkSync(lockPath);
+    }
+    this.closed = true;
   }
 }
