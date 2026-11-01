@@ -48,6 +48,50 @@ test("malformed planner output is recorded as failed without publishing tasks", 
   assert.equal(controller.snapshot().planningAttempts[0].outcome, "failed");
 });
 
+test("pending planning rejects additions before they can collide with the plan", async t => {
+  let release!: () => void;
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const planned = { tasks: [{ ...plan.tasks[0], id: "task-1" }] };
+  const { controller } = setup(t, req => new Promise(resolve => {
+    release = () => resolve(result(req, JSON.stringify(planned)));
+    started();
+  }));
+  const planning = controller.start("disk app");
+  let planningError: unknown;
+  await ready;
+  try {
+    assert.throws(() => controller.add("developer", "follow-up"), /계획/);
+    assert.equal(controller.snapshot().tasks.length, 0);
+  } finally {
+    release();
+    await planning.catch(error => { planningError = error; });
+  }
+  assert.ifError(planningError);
+  assert.equal(controller.snapshot().planningAttempts[0].outcome, "success");
+  assert.deepEqual(controller.snapshot().tasks.map(task => task.id), ["task-1"]);
+  assert.equal(controller.add("developer", "follow-up after planning").id, "task-2");
+});
+
+test("follow-up additions remain available during ordinary worker execution", async t => {
+  let release!: () => void;
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const { controller } = setup(t, req => new Promise(resolve => {
+    release = () => resolve(result(req));
+    started();
+  }));
+  const task = controller.add("developer", "initial work");
+  const running = controller.run(task.id);
+  await ready;
+  try {
+    assert.equal(controller.add("designer", "follow-up").id, "task-2");
+    assert.equal(controller.snapshot().tasks[1].status, "queued");
+  } finally { release(); await running; }
+  assert.equal(controller.snapshot().tasks[0].status, "needs_review");
+  assert.equal(controller.snapshot().tasks[1].status, "queued");
+});
+
 test("success is never auto-completed and revision preserves attempt-bound evidence", async t => {
   const { controller } = setup(t, async req => result(req));
   const task = controller.add("developer", "작은 기능 구현");

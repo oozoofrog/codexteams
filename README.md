@@ -23,7 +23,7 @@ bash scripts/install-macos.sh --target "$HOME/develop/codexteams"
 
 기본 대상도 `$HOME/develop/codexteams`입니다. 기존의 비어 있지 않은 폴더는 덮어쓰지 않습니다. `--copy-only`는 소스만 복사하고 의존성 설치나 Pi 설정 변경을 하지 않습니다. 이미 목표 폴더에 압축을 풀었다면 그 폴더에서 스크립트를 실행해도 됩니다.
 
-> 이 개발 세션에서는 사용자의 Mac에 연결되지 않았습니다. 소스와 검증된 첫 구현을 전달하며, Mac 설치 완료를 뜻하지 않습니다.
+macOS에서 확인한 설치·명령·자동 테스트 범위는 [검증 기록](docs/verification.md)에 정리했습니다. 격리된 Pi 설정의 설치 검증과 실제 사용 중인 Pi에 등록하는 단계는 구분합니다.
 
 ## 첫 프로젝트
 
@@ -38,6 +38,8 @@ bash scripts/install-macos.sh --target "$HOME/develop/codexteams"
 ```
 
 `start`는 파일을 읽어 계획을 생성하고, `run`은 준비된 작업을 실제로 수행합니다. 계획은 부모 세션과 별개로 지정된 planner 모델에서 생성합니다.
+
+계획 생성 중에는 `add`를 사용할 수 없습니다. 계획이 끝난 뒤 후속 작업을 추가하세요. 일반 작업이나 검증 명령 실행 중에는 후속 작업을 추가할 수 있습니다.
 
 결과를 확인하고 검증·수락합니다. `scan`은 예시 ID이며 실제 ID는 작업 목록에 표시됩니다.
 

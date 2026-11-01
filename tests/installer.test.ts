@@ -18,7 +18,8 @@ test("Mac source installer copies a clean package without overwriting an existin
   const root = mkdtempSync(join(tmpdir(), "codexteams-install-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const target = join(root, "develop", "codexteams");
-  assert.equal((await install(target)).code, 0);
+  const installed = await install(target);
+  assert.equal(installed.code, 0, installed.output);
   assert.equal(JSON.parse(readFileSync(join(target, "package.json"), "utf8")).name, "codexteams");
   assert.equal(existsSync(join(target, "node_modules")), false);
   assert.equal(existsSync(join(target, ".git")), false);
@@ -26,5 +27,6 @@ test("Mac source installer copies a clean package without overwriting an existin
   assert.notEqual((await install(target)).code, 0);
   assert.equal(readFileSync(join(target, "keep.txt"), "utf8"), "user work");
   const empty = join(root, "empty"); mkdirSync(empty);
-  assert.equal((await install(empty)).code, 0);
+  const copied = await install(empty);
+  assert.equal(copied.code, 0, copied.output);
 });

@@ -19,7 +19,7 @@
 - Pi termination cancels workers; resume reconciles actual state.
 - Unknown usage is not zero. Reasoning is included in output.
 - No live paid model calls in automated verification.
-- Mac destination is not reachable in this session; package delivery must not imply local installation.
+- The original Linux delivery could not reach the Mac destination. Follow-up macOS verification must distinguish isolated test installation from real-user registration and live-account validation.
 
 ## Review Focus
 
@@ -99,3 +99,17 @@
 ## Release handoff
 
 Implementation and integrated verification are complete: TypeScript passes, 74 tests pass with no failures or skips, and the actual Pi loader reports zero errors. The source manifest has been inspected. The source ZIP has been constructed and checked; durable transfer follows this source snapshot; delivery is confirmed by the final downloadable file, not by assuming the requested Mac path was created.
+
+## Task 6: macOS continuation
+
+**Goal:** Preserve the delivered v0.1 scope, resolve proven defects and establish current macOS evidence. The user explicitly chose to retain TypeScript after discussing Rust feasibility.
+
+**Files:** `src/core/controller.ts`, `tests/controller.test.ts`, `tests/pi-runner.test.ts`, `tests/installer.test.ts`, `tests/extension-host.test.ts`, README and verification/handoff documents.
+
+- [x] Commit the imported source before edits (`95a1e6e`).
+- [x] Run the baseline and preserve failures. Correct the macOS canonical-path assertion without weakening cwd identity.
+- [x] Reproduce concurrent planning/add collisions, reject additions during planning, and retain additions during worker/check execution.
+- [x] Add a real Pi CLI host test with disposable settings and no inherited provider credentials; verify registration, commands, durable state and shutdown lock release.
+- [x] Run the macOS installer in a disposable destination and Pi settings directory.
+- [x] Independently review current code and cancellation/check-add lifecycle behavior.
+- [x] Run the final complete suite, loader, package and whitespace checks; reconcile documentation and commit the verified changes.

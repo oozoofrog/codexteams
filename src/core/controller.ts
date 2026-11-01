@@ -23,7 +23,7 @@ const WORKER_SYSTEM = `You are a codexteams task worker. Follow the given projec
 export class TeamController {
   readonly store: ProjectStore;
   private options: ControllerOptions;
-  private active: { abort: AbortController; done: Promise<unknown> } | undefined;
+  private active: { abort: AbortController; done: Promise<unknown>; kind: "planning" | "execution" } | undefined;
   private closed = false;
   private activity = "준비";
 
@@ -43,12 +43,12 @@ export class TeamController {
     if (this.active) throw new Error("이미 작업 또는 검증이 실행 중입니다. /teams cancel로 중단할 수 있습니다.");
   }
 
-  private exclusive<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  private exclusive<T>(work: (signal: AbortSignal) => Promise<T>, kind: "planning" | "execution" = "execution"): Promise<T> {
     this.ensureIdle();
     if (this.snapshot().recoveryRequired) throw new Error(this.snapshot().recoveryReason || "프로젝트 복구 확인이 필요합니다. /teams recover");
     const abort = new AbortController();
     const done = Promise.resolve().then(() => work(abort.signal)).finally(() => { this.active = undefined; this.notify("준비"); });
-    this.active = { abort, done };
+    this.active = { abort, done, kind };
     return done;
   }
 
@@ -134,11 +134,12 @@ export class TeamController {
       this.store.update(state => { state.tasks.push(...tasks); });
       this.notify(`${tasks.length}개 작업 준비`);
       return tasks;
-    });
+    }, "planning");
   }
 
   add(role: TaskRole, description: string): Task {
     if (this.closed) throw new Error("종료 중인 팀입니다.");
+    if (this.active?.kind === "planning") throw new Error("계획 생성 중에는 작업을 추가할 수 없습니다. 계획이 끝난 뒤 /teams add를 사용하세요.");
     if (!["developer", "designer", "reviewer"].includes(role)) throw new Error("작업 역할은 developer/designer/reviewer입니다.");
     const value = description.trim();
     if (!value || Buffer.byteLength(value) > 16384) throw new Error("작업 내용을 1~16384바이트로 입력하세요.");

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, open, readFile, rm } from "node:fs/promises";
+import { mkdtemp, open, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -27,7 +27,7 @@ test("worker invocation keeps cwd, literal prompt, explicit routing, session, an
   const result = await runPiWorker(req);
   assert.equal(result.outcome, "success");
   const captured = JSON.parse(result.text);
-  assert.equal(captured.cwd, req.cwd);
+  assert.equal(captured.cwd, await realpath(req.cwd));
   assert.equal(captured.systemPrompt, req.systemPrompt);
   const args: string[] = captured.args;
   for (const [flag, value] of [["--mode", "json"], ["--model", "fixture/test-model"], ["--thinking", "high"],

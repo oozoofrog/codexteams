@@ -1,8 +1,41 @@
 # codexteams 0.1.0 검증 기록
 
+## macOS 후속 검증 — 2026-11-01
+
+대상 소스: `/Volumes/eyedisk/develop/oozoofrog/codexteams`. 원본 초기 커밋은 `95a1e6e`이며 작업 브랜치는 `implementation/macos-validation`이다. Rust 전환 가능성을 검토한 뒤 사용자는 TypeScript 유지를 선택했다.
+
+환경: macOS 27.2 (26B123), Node v26.12.1, npm 11.20.0, Pi 1.4.0. 의존성 122개를 lockfile로 설치했다. Node 최소 지원 버전 22.19.0 자체의 실행은 검증하지 않았다.
+
+| 검증 | 결과 |
+|---|---|
+| `npm run check` | exit 0. TypeScript 통과, **77개 통과 / 실패 0 / 건너뜀 0** |
+| `npm run smoke:load` | exit 0. 실제 Pi 로더 오류 0, `teams` 명령과 `codexteams_status` 도구 등록 |
+| `npm run pack:check` | exit 0. 패키지 구성 확인, 공개 배포 없음 |
+| `git diff --check` | 공백 오류 없음 |
+| 실제 Pi host 자동 테스트 | 격리된 설정에 로컬 패키지 등록 후 `help`, `status`, `add`, `profile`, `show` 실행. 상태·프로필 저장과 종료 후 잠금 해제 확인 |
+| 실제 Mac 설치 스크립트 | 임시 대상에 소스 복사, `npm ci`, 격리된 Pi 설정의 패키지 등록 완료. 실제 사용자의 Pi 설정은 변경하지 않음 |
+| 독립 코드 검토 | 현재 변경에 중대한 결함 없음. 별도 실행한 controller/runner 테스트 52개 통과. 계획 취소 중 추가 차단·취소 후 추가 허용·검증 실행 중 추가 허용도 확인 |
+
+### 변경과 회귀 검증
+
+- 계획 생성 중 `add`가 같은 작업 ID를 만들면 계획 게시가 실패하고 재시도가 막혔다. 실패 테스트로 재현한 뒤 계획 생성 중에만 추가를 차단했다. 일반 worker와 검증 실행 중에는 추가를 허용한다.
+- macOS의 `/var`와 `/private/var`는 같은 폴더를 가리킬 수 있다. worker cwd 테스트가 실제 경로를 비교하도록 수정했다.
+- 실제 Pi CLI 통합 테스트는 별도 `PI_CODING_AGENT_DIR`을 사용하며 공급자 인증 환경 변수를 전달하지 않는다. JSONL에 모델 실행 시작이 없고 작업 attempt도 생성되지 않았음을 확인한다.
+- 통합 테스트의 첫 실행은 stdin pipe가 열린 채여서 Pi의 EOF 대기 중 timeout이 발생했다. 테스트가 stdin을 닫도록 수정한 뒤 단독 실행과 전체 실행이 통과했다. production 코드는 변경하지 않았다.
+- 중간 전체 실행에서 설치 복사 테스트가 한 차례 실패했다. 원인은 확정하지 못했다. 단독 재검사와 이후 전체 76개·77개 테스트 실행은 통과했다. 오류 출력을 assertion에 포함해 다음 실패의 원인을 남기도록 했다.
+- 검증 종료 후 background writer가 남을 수 있다는 우려는 12회의 실제 프로세스 관찰에서 재현되지 않았다. 관련 production 코드는 변경하지 않았다.
+
+### 근거와 검증 경계
+
+전체 로그는 다음 폴더에 보존했다: [/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification](/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification). 주요 파일은 `baseline-check.log`, `planning-red.log`, `controller-green.log`, `intermediate-check-installer-failure.log`, `host-test-stdin-failure.log`, `final-check.log`, `macos-install.log`, `registered-host.jsonl`이다. 실패 기록을 삭제하지 않았다.
+
+macOS CLI·프로세스 그룹·설치·상태 저장 검증을 실제로 실행했다. 대화형 TUI의 시각적 사용성, 실제 사용자의 Pi 등록·reload, 로그인 계정 모델 호출·entitlement·청구는 확인하지 않았다. 유료 모델 호출과 외부 게시를 하지 않았다. 병렬 worktree, 자동 수락, 자동 모델 배정과 Ultra 전략은 기존 후속 범위로 남긴다.
+
+## 이전 Linux 전달본 기록
+
 검증일: 2026-11-01. 대상: 이 소스 패키지의 첫 Pi 확장 구현.
 
-## 최종 결과
+### 최종 결과
 
 | 검증 | 실제 실행 결과 |
 |---|---|
@@ -15,7 +48,7 @@
 
 실제 Pi 로더 출력은 `docs/load-smoke-result.json`에 보관했다. npm 패키지 점검은 설치용 파일 집합 검사다. 사용자에게 전달하는 ZIP은 개발을 이어갈 수 있도록 테스트·TypeScript 설정·lockfile도 포함한 전체 소스다.
 
-## 실행 환경
+### 실행 환경
 
 - Linux, Node 24.22.1. 패키지가 선언한 최소 Node 버전은 22.19.0이며, 최소 버전 자체를 별도로 실행 검증하지는 않았다.
 - `@earendil-works/pi-coding-agent` 1.4.0, `@earendil-works/pi-ai` 1.4.0.
@@ -24,7 +57,7 @@
 - 기본 관리 환경에서는 Node PID와 OS `ps` 정보가 다르고 child 출력 전달이 제한되는 현상을 확인했다. 실패한 `ps` 조회를 '프로세스가 종료됨'으로 간주하지 않도록 테스트를 수정했다. production의 소유권 확인 조건은 약화하지 않았다.
 - npm 패키지 점검의 기본 캐시 경로는 쓰기 불가능했으므로 쓰기 가능한 임시 캐시 경로를 명시해 성공시켰다. 소스 결함이나 배포 실패로 처리하지 않는다.
 
-## 검증한 동작
+### 검증한 동작
 
 1. 목표 → 읽기 전용 계획 → 엄격한 JSON/DAG 검증 → 작업 저장 → 실행 → 검토 대기 → 사용자 수락 → 의존 작업 해제.
 2. 역할별 명시적 모델·effort, capability 실패 시 호출 방지, `ultra`를 실제 effort로 보내지 않음.
@@ -36,7 +69,7 @@
 8. assistant 최종 사용량만 합산, 스트리밍 중복 제외, reasoning 이중 합산 방지, 실패·중단의 미확인 사용량 보존, 실행 중 부분 합계 저장.
 9. 직접 사용자 명령에만 실행·검증·수락을 제공하고, 모델에 노출되는 조회 도구는 읽기 전용으로 유지.
 
-## 독립 검토에서 수정한 결함
+### 독립 검토에서 수정한 결함
 
 | 재현한 결함 | 수정과 회귀 검증 |
 |---|---|
@@ -49,7 +82,7 @@
 
 최종 guard 범위의 독립 검토에서는 남은 Important/Critical lifecycle·ownership 결함이 보고되지 않았다. 이는 아래 미검증 환경까지 보장한다는 뜻은 아니다.
 
-## 아직 검증하지 않은 사항
+### 아직 검증하지 않은 사항
 
 - 사용자 Mac의 `eyedisk/develop/codexteams` 생성·설치, 실제 macOS TUI 표시·상호작용.
 - 사용자 계정의 Terra/Sol/Astra entitlement, 실제 로그인 모델 호출, 공급자 청구/플랜 차감.
