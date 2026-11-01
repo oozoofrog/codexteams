@@ -149,4 +149,4 @@ npm run pack:check
 - 검증 기록: [docs/verification.md](docs/verification.md)
 - Mac의 ChatGPT Work에서 이어가기: [docs/WORK_HANDOFF.md](docs/WORK_HANDOFF.md)
 
-외부 저장소 게시나 npm 공개 배포는 수행하지 않았습니다.
+공개 저장소: [oozoofrog/codexteams](https://github.com/oozoofrog/codexteams). npm 공개 배포는 수행하지 않았습니다.

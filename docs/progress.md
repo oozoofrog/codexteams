@@ -39,3 +39,9 @@
 - Final integrated suite: TypeScript passed; 77 tests passed, 0 failed, 0 skipped on macOS. Fresh independent review approved current code; separate controller/runner run passed 52 tests and cancellation/check-add lifecycle probes passed.
 - Real Mac installer and registered Pi CLI commands passed using disposable target/settings. User's active Pi settings/auth were not modified; no live model calls. Node 22.19.0 execution and interactive TUI remain unverified.
 - Final loader, package dry-run and whitespace checks passed. All raw logs, including failed checks, were preserved in `/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification`. Branch remains local; no push or public release.
+
+## 2026-11-01 public repository
+
+- User explicitly requested merging into main, then creating a public GitHub repository. main was fast-forwarded to `32ebc1c`; the post-merge TypeScript check and all 77 tests passed.
+- Created `https://github.com/oozoofrog/codexteams` as public, connected origin and pushed main. GitHub's default branch and matching local/remote commit were verified.
+- Publication audit inspected both existing commits and all 46 reachable file blobs; no credential or private-key blockers found. Local ZIP, dependencies, runtime state and external evidence logs were not published. Existing npm-private and license settings were retained.
