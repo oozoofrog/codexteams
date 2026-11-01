@@ -38,7 +38,12 @@ if [ "$target_dir" != "$source_dir" ]; then
   else
     mkdir "$target_dir"
   fi
-  tar -C "$source_dir" --exclude='./node_modules' --exclude='./.git' --exclude='./.codexteams' --exclude='*.tgz' --exclude='*.zip' -cf - . | tar -C "$target_dir" -xf -
+  copy_archive="$(mktemp "${TMPDIR:-/tmp}/codexteams-copy.XXXXXX")"
+  trap 'rm -f "$copy_archive"' EXIT
+  tar -C "$source_dir" --exclude='./node_modules' --exclude='./.git' --exclude='./.codexteams' --exclude='*.tgz' --exclude='*.zip' -cf "$copy_archive" .
+  tar -C "$target_dir" -xf "$copy_archive"
+  rm -f "$copy_archive"
+  trap - EXIT
 fi
 
 echo "프로젝트 소스: $target_dir"
@@ -53,5 +58,6 @@ node -e 'const m=process.argv[1].match(/(?:^|\s)(\d+)\.(\d+)\.(\d+)(?:\s|$)/); i
 
 cd "$target_dir"
 npm ci --ignore-scripts --no-audit --no-fund
+npm install -g --ignore-scripts --omit=dev --legacy-peer-deps "$target_dir"
 pi install "$target_dir"
-echo '설치 명령이 완료됐습니다. Pi에서 /reload 후 /teams help를 실행하세요.'
+echo '설치 명령이 완료됐습니다. 작업할 프로젝트에서 codexteams를 실행하세요. 기존 Pi에서는 /reload 후 /teams help를 실행하세요.'

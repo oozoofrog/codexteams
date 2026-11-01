@@ -98,6 +98,11 @@ function installedBin(start: string): string | undefined {
 
 /** Resolve an existing installation. Never downloads a CLI or interprets a shell command. */
 export function resolvePiInvocation(): WorkerInvocation {
+  if (process.env.CODEXTEAMS_PI !== undefined) {
+    const selected = process.env.CODEXTEAMS_PI;
+    if (!selected.trim()) throw new Error("CODEXTEAMS_PI must name a Pi executable.");
+    return { command: selected, args: [] };
+  }
   for (const specifier of [`${PI_PACKAGE}/package.json`, PI_PACKAGE]) {
     try {
       const bin = installedBin(fileURLToPath(import.meta.resolve(specifier)));

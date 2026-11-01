@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectStore } from "../src/core/store.ts";
-import { TeamController } from "../src/core/controller.ts";
+import { TeamController, type ControllerOptions } from "../src/core/controller.ts";
 import type { WorkerRequest, WorkerResult, WorkerRunner } from "../src/core/types.ts";
 
 const known = { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 12, totalTokens: 30, costUsd: 0.001, responses: 1, completeness: "known" as const };
@@ -15,10 +15,10 @@ const plan = { tasks: [
 function result(request: WorkerRequest, text = "implemented"): WorkerResult {
   return { outcome: "success", text, exitCode: 0, usage: known, effectiveModels: [`${request.profile.provider}/${request.profile.model}`], sessionId: request.sessionId };
 }
-function setup(t: { after: (fn: () => void | Promise<void>) => void }, runner: WorkerRunner) {
+function setup(t: { after: (fn: () => void | Promise<void>) => void }, runner: WorkerRunner, onChange?: ControllerOptions["onChange"]) {
   const root = mkdtempSync(join(tmpdir(), "codexteams-controller-"));
   const store = ProjectStore.open(root);
-  const controller = new TeamController(store, { runner, validateProfile: async () => undefined });
+  const controller = new TeamController(store, { runner, validateProfile: async () => undefined, onChange });
   t.after(async () => { await controller.shutdown(); rmSync(root, { recursive: true, force: true }); });
   return { root, store, controller };
 }
@@ -215,4 +215,116 @@ test("a failed model capability preflight never invokes a worker or fabricates a
   assert.equal(calls, 0);
   assert.equal(controller.snapshot().tasks[0].attempts.length, 0);
   assert.equal(controller.snapshot().tasks[0].status, "queued");
+});
+
+
+test("launch reserves planning and execution, publishes the plan first and preserves review gates", async t => {
+  let release!: () => void;
+  let planned!: () => void;
+  const ready = new Promise<void>(resolve => { planned = resolve; });
+  const requests: WorkerRequest[] = [];
+  const { controller } = setup(t, req => {
+    requests.push(req);
+    if (requests.length === 1) return new Promise(resolve => { release = () => resolve(result(req, JSON.stringify(plan))); planned(); });
+    assert.ok(controller.snapshot().tasks.some(task => task.status === "running"));
+    if (requests.length === 2) controller.add("reviewer", "independent follow-up");
+    return Promise.resolve(result(req));
+  });
+  const launching = controller.launch("initial goal");
+  await ready;
+  assert.equal(requests.length, 1);
+  assert.equal(controller.busy, true);
+  assert.equal(controller.snapshot().tasks.length, 0);
+  assert.throws(() => controller.add("developer", "colliding addition"), /계획/);
+  await assert.rejects(controller.run(), /실행 중/);
+  release();
+  const summary = await launching;
+  assert.deepEqual(summary.executed, ["scan", "task-3"]);
+  assert.deepEqual(summary.blocked, ["view"]);
+  assert.deepEqual(summary.waitingReview, ["scan", "task-3"]);
+  assert.equal(controller.busy, false);
+});
+
+test("launch cancellation while planning never starts a task worker", async t => {
+  let began!: () => void;
+  const ready = new Promise<void>(resolve => { began = resolve; });
+  let calls = 0;
+  const { controller } = setup(t, req => new Promise(resolve => {
+    calls++; began();
+    req.signal!.addEventListener("abort", () => resolve(result(req, JSON.stringify(plan))), { once: true });
+  }));
+  const launching = controller.launch("cancel goal");
+  const rejected = assert.rejects(launching, /중단|abort/i);
+  await ready; await controller.cancel(); await rejected;
+  assert.equal(calls, 1);
+  assert.equal(controller.snapshot().tasks.length, 0);
+  assert.equal(controller.snapshot().planningAttempts[0].outcome, "aborted");
+});
+
+for (const action of ["cancel", "shutdown"] as const) {
+  test(`launch ${action} at the plan-to-worker boundary cannot dispatch later work`, async t => {
+    let calls = 0;
+    let stopped: Promise<void> | undefined;
+    const { controller } = setup(t, async req => { calls++; return result(req, JSON.stringify(plan)); }, (_state, activity) => {
+      if (activity === "2개 작업 준비") stopped = controller[action]();
+    });
+    await assert.rejects(controller.launch("boundary goal"), /중단|abort|종료/i);
+    await stopped;
+    assert.equal(calls, 1);
+    assert.deepEqual(controller.snapshot().tasks.map(task => task.status), ["queued", "queued"]);
+  });
+}
+
+test("lost store ownership after publishing the plan cannot start a task worker", async t => {
+  let calls = 0;
+  const { controller, store } = setup(t, async req => { calls++; return result(req, JSON.stringify(plan)); }, (_state, activity) => {
+    if (activity === "2개 작업 준비") {
+      const path = join(store.directory, "lock.json");
+      const lock = JSON.parse(readFileSync(path, "utf8"));
+      writeFileSync(path, JSON.stringify({ ...lock, nonce: "new-owner" }));
+    }
+  });
+  await assert.rejects(controller.launch("ownership goal"), /잠금|소유/);
+  assert.equal(calls, 1);
+  assert.deepEqual(controller.snapshot().tasks.map(task => task.status), ["queued", "queued"]);
+});
+
+for (const saved of ["goal", "tasks", "planning"] as const) {
+  test(`launch refuses saved ${saved} without replanning or resetting it`, async t => {
+    let calls = 0;
+    const { controller, store } = setup(t, async req => { calls++; return { ...result(req), outcome: "failed", error: "planner failed" }; });
+    if (saved === "goal") store.update(state => { state.goal = "saved goal"; });
+    if (saved === "tasks") controller.add("developer", "saved task");
+    if (saved === "planning") {
+      await assert.rejects(controller.start("failed goal"), /planner failed/);
+      store.update(state => { state.goal = ""; });
+    }
+    const before = controller.snapshot();
+    const beforeCalls = calls;
+    await assert.rejects(controller.launch("new goal"), /기존|이미/);
+    assert.equal(calls, beforeCalls);
+    assert.deepEqual(controller.snapshot(), before);
+  });
+}
+
+test("profiles-only state can launch and uses the selected profile", async t => {
+  const requests: WorkerRequest[] = [];
+  const { controller } = setup(t, async req => { requests.push(req); return result(req, requests.length === 1 ? JSON.stringify(plan) : "implemented"); });
+  controller.setProfile("planner", { provider: "openai", model: "gpt-6-astra", effort: "high" });
+  const summary = await controller.launch("first goal");
+  assert.equal(requests[0].profile.model, "gpt-6-astra");
+  assert.deepEqual(summary.executed, ["scan"]);
+  assert.equal(controller.snapshot().tasks[0].status, "needs_review");
+});
+
+test("launch preserves recovery gating and a failed planner never dispatches tasks", async t => {
+  let calls = 0;
+  const { controller, store } = setup(t, async req => { calls++; return result(req, "invalid plan"); });
+  store.update(state => { state.recoveryRequired = true; });
+  await assert.rejects(controller.launch("goal"), /복구/);
+  assert.equal(calls, 0);
+  controller.recover(true);
+  await assert.rejects(controller.launch("goal"), /계획|JSON/);
+  assert.equal(calls, 1);
+  assert.equal(controller.snapshot().tasks.length, 0);
 });

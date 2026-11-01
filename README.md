@@ -2,61 +2,93 @@
 
 Pi 안에서 프로젝트 목표를 작업으로 나누고, 역할별 모델을 실행하며, 결과·검증·사용량을 보관하는 순수 Pi 확장입니다.
 
-**0.1.0 첫 구현:** 별도 서버·독립 TUI·Codex 실행기 없이 Pi의 로그인과 화면을 사용합니다. 쓰기 작업은 순서대로 실행합니다. 모델의 정상 종료는 `검토 대기`이며 사용자가 수락해야 `수락 완료`가 됩니다.
+**0.2.0:** `codexteams` 명령으로 Pi를 열고, 새 목표의 계획 생성과 준비된 작업 실행을 시작합니다. Pi의 로그인과 화면을 사용하며 쓰기 작업은 순차 실행합니다. 모델의 정상 종료는 `검토 대기`이며 사용자가 수락해야 `수락 완료`가 됩니다.
 
 ## 설치
 
-Node **22.19.0 이상**, npm, Git, Pi **1.4.0 이상 2 미만**이 필요합니다. 현재 macOS와 Pi 1.4.0에서 검증했습니다. Windows의 쓰기 worker는 지원하지 않습니다.
+Node **22.19.0 이상**, npm, Git, Pi **1.4.0 이상 2 미만**이 필요합니다. macOS와 Pi 1.4.0에서 검증했습니다. Windows의 쓰기 worker는 지원하지 않습니다.
 
-### 빠른 설치
+### codexteams 명령 설치
 
-Pi가 설치되어 있다면 아래 명령으로 GitHub에서 바로 설치합니다. 별도 clone이나 `npm ci`는 필요하지 않습니다.
-
-```bash
-pi install https://github.com/oozoofrog/codexteams
-pi list
-```
-
-기본 설치는 사용자별 Pi 설정에 등록합니다. 현재 프로젝트에만 등록하려면 그 프로젝트 폴더에서 다음 명령을 사용합니다. 프로젝트 설치는 Pi에서 해당 프로젝트를 신뢰한 뒤 로드됩니다.
+Pi가 설치되어 있다면 아래 명령으로 실행 명령을 설치합니다. 별도 clone은 필요하지 않습니다.
 
 ```bash
-pi install --local https://github.com/oozoofrog/codexteams
+npm install -g --ignore-scripts --omit=dev --legacy-peer-deps --no-audit --no-fund git+https://github.com/oozoofrog/codexteams.git
+codexteams --version
+codexteams --help
 ```
+
+`--legacy-peer-deps`는 Pi가 제공하는 패키지를 별도 복사본으로 설치하지 않도록 합니다. Pi는 아래 선행 단계에서 별도로 준비합니다.
+
+작업할 프로젝트 폴더에서 실행합니다.
+
+```bash
+codexteams
+codexteams "폴더 용량 리포트 CLI를 만들어 줘"
+```
+
+목표 없이 실행하면 현재 팀 상태를 표시합니다. 새 목표를 주면 역할별 프로필을 사용해 계획을 생성하고 실행 가능한 작업을 시작합니다. 결과는 검토 대기에서 멈춥니다. 기존 목표나 작업 이력이 있으면 상태를 열고 자동으로 다시 계획하거나 재시도하지 않습니다.
+
+터미널에서는 Pi TUI를 사용합니다. 표준 입력 또는 출력이 터미널이 아니면 JSONL을 출력합니다. 목표는 인자로 전달하며, 파이프로 들어오는 텍스트는 Pi 실행 전에 거부합니다.
+
+이 명령이 여는 Pi 세션은 이 설치본의 codexteams 확장만 명시적으로 로드합니다. 다른 자동 발견 확장과 그 확장이 제공하는 custom provider는 이 세션에서 로드하지 않습니다. 개인 Pi 설정과 로그인 파일은 수정하지 않습니다. 다른 확장과 함께 사용하려면 아래의 확장 전용 설치 후 일반 Pi에서 `/teams launch <목표>`를 사용하세요.
 
 ### 링크를 받은 에이전트의 설치 순서
 
-1. `node --version`, `npm --version`, `git --version`, `pi --version`으로 기존 환경을 확인합니다. Node·npm·Git이 없거나 버전이 맞지 않으면 현재 OS의 패키지 관리자로 준비한 뒤 다시 확인합니다.
-2. Pi가 없으면 아래 명령으로 검증 버전을 설치합니다. 기존 Pi가 지원 범위 밖이면 기존 설치 방법으로 호환 버전을 준비합니다. 로그인과 기존 설정을 초기화하지 않습니다.
+1. `node --version`, `npm --version`, `git --version`, `pi --version`으로 기존 환경을 확인합니다. 필수 도구가 없거나 버전이 맞지 않으면 현재 OS의 패키지 관리자로 준비한 뒤 다시 확인합니다.
+2. Pi가 없으면 검증 버전을 설치합니다. 기존 Pi가 지원 범위 밖이면 기존 설치 방법으로 호환 버전을 준비합니다. 로그인과 기존 설정을 초기화하지 않습니다.
 
    ```bash
    npm install -g @earendil-works/pi-coding-agent@1.4.0
    pi --version
    ```
 
-3. `pi list`로 기존 등록을 확인한 뒤 빠른 설치 명령을 실행합니다. 이미 같은 URL이 등록되어 있으면 아래 업데이트 명령을 사용합니다. 로컬 소스와 GitHub 소스를 동시에 등록하지 않습니다. 기존 소스 폴더를 삭제하거나 덮어쓰지 않습니다.
-4. 아래 명령으로 새 Pi 프로세스에서 설치를 확인합니다. 표준 입력을 닫아 자동화 환경의 EOF 대기를 방지합니다.
+3. 위의 `npm install -g ...` 명령으로 codexteams를 설치하고 `codexteams --version`, `codexteams --help`를 확인합니다. 이전에 `pi install URL`만 실행했다면 실행 명령은 아직 설치되지 않은 상태입니다.
+4. 새 빈 폴더에서 다음 명령을 실행합니다. 목표 없는 조회이므로 작업 상태 파일을 만들거나 모델을 호출하지 않습니다.
 
    ```bash
-   pi --mode json -p --no-session --no-skills --no-prompt-templates --no-mcp -- "/teams help" "/teams status" </dev/null
+   codexteams </dev/null
    ```
 
-   종료 코드가 0이고, JSONL에서 `type`이 `message_end`이며 `message.customType`이 `codexteams`인 이벤트가 두 개 나오면 명령 로드를 확인한 것입니다. 작업이 없는 프로젝트에서는 `status`도 사용 안내를 표시합니다. 오류가 나거나 메시지가 없으면 설치 완료로 보고하지 말고 오류를 확인합니다.
+   종료 코드가 0이고 JSONL에서 `type`이 `message_end`, `message.customType`이 `codexteams`인 안내 메시지가 나오면 Pi와 확장 연결을 확인한 것입니다. 오류가 나거나 메시지가 없으면 설치 완료로 보고하지 않습니다.
 
-5. 실행 중인 Pi가 있으면 `/reload`합니다. 새로 실행한 Pi는 등록된 확장을 자동으로 로드합니다. 설치 결과에는 Pi 버전, 설치 범위, `pi list` 결과와 위 확인 명령의 결과를 남깁니다.
-6. 설치 확인에 `/teams start`나 `/teams run`을 사용하지 않습니다. 실제 작업을 시작할 때 로그인이 필요하면 사용자가 Pi의 `/login`을 완료한 뒤 `/model`에서 모델을 확인합니다. API 키나 OAuth 토큰을 복사하거나 로그에 출력하지 않습니다.
+5. 설치 결과에는 Node·Pi·codexteams 버전, 사용한 Pi 실행 파일과 위 확인 결과를 남깁니다. 특정 Pi를 선택하려면 아래 옵션이나 `CODEXTEAMS_PI` 환경 변수를 사용합니다. 선택한 Pi를 사용할 수 없으면 다른 실행 파일로 전환하지 않습니다.
 
-설치 자체에는 모델 로그인이 필요하지 않습니다. 위 명령 확인은 모델 실행이나 대화형 TUI의 시각 검증을 뜻하지 않습니다.
+   ```bash
+   codexteams --pi /absolute/path/to/pi "프로젝트 목표"
+   ```
+
+6. 실제 목표를 전달하면 모델 호출과 프로젝트 파일 변경을 시작합니다. 로그인이 필요하면 사용자가 Pi의 `/login`을 완료한 뒤 `/model`에서 모델을 확인합니다. 역할별 프로필은 `/teams profile`로 설정합니다. 설치 확인만 할 때는 목표를 전달하지 않습니다. API 키나 OAuth 토큰을 복사하거나 로그에 출력하지 않습니다.
+
+설치·조회에는 모델 로그인이 필요하지 않습니다. 위 확인은 실제 계정 모델 실행이나 전체 작업의 자동 완료를 검증하는 절차가 아닙니다.
 
 ### 업데이트와 제거
+
+실행 명령을 업데이트하려면 처음의 `npm install -g ...` 명령을 다시 실행합니다. 제거할 때는 다음 명령을 사용합니다.
+
+```bash
+npm uninstall -g codexteams
+```
+
+제거해도 작업 프로젝트의 `.codexteams` 상태를 삭제하지 않습니다. 기존 Pi 프로세스는 사용 중인 버전이므로 종료한 뒤 `codexteams`를 다시 실행합니다.
+
+### 일반 Pi에 확장만 설치
+
+codexteams 실행 명령이 필요 없고 기존 Pi에서 `/teams` 명령만 사용하려면 아래 방법을 사용합니다. 이 방법은 PATH에 `codexteams` 명령을 추가하지 않습니다.
+
+```bash
+pi install https://github.com/oozoofrog/codexteams
+pi list
+```
+
+실행 중인 Pi에서는 `/reload`합니다. 현재 프로젝트에만 등록하려면 해당 폴더에서 `pi install --local https://github.com/oozoofrog/codexteams`를 실행합니다. 프로젝트 설치는 Pi에서 해당 프로젝트를 신뢰한 뒤 로드됩니다.
+
+확장만 업데이트하거나 제거할 때는 다음 명령을 사용합니다. 프로젝트 설치는 해당 폴더에서 업데이트하고, 제거에는 `--local`을 붙입니다. `pi update`만 실행하면 Pi 자체를 업데이트합니다.
 
 ```bash
 pi update https://github.com/oozoofrog/codexteams
 pi remove https://github.com/oozoofrog/codexteams
 ```
-
-프로젝트에만 설치했다면 업데이트 명령은 해당 프로젝트 폴더에서 실행하고, 제거 명령에는 `--local`을 붙입니다. `pi update`만 실행하면 Pi 자체를 업데이트합니다. 업데이트 후 실행 중인 Pi에서는 `/reload`합니다.
-
-GitHub 설치본은 Pi가 관리합니다. 직접 수정할 개발용 소스는 아래 방법으로 별도 clone합니다. Pi의 업데이트가 관리 중인 설치 폴더를 다시 맞출 수 있으므로 그 폴더에서 개발하지 않습니다.
 
 ### 소스를 수정하며 설치
 
@@ -64,34 +96,32 @@ GitHub 설치본은 Pi가 관리합니다. 직접 수정할 개발용 소스는 
 git clone https://github.com/oozoofrog/codexteams.git codexteams
 cd codexteams
 npm ci --ignore-scripts --no-audit --no-fund
-pi install "$PWD"
+npm install -g --ignore-scripts --omit=dev --legacy-peer-deps "$PWD"
 ```
 
 이미 clone한 소스라면 해당 폴더에서 마지막 두 명령만 실행합니다. 새로 clone할 경로에 `codexteams` 폴더가 이미 있으면 기존 내용을 보존하고 다른 빈 경로를 선택합니다.
 
-Mac에서 소스를 다른 폴더로 복사하며 설치하려면 소스 폴더에서 다음 스크립트를 실행합니다.
+Mac에서 소스를 다른 폴더로 복사하며 명령과 일반 Pi 확장을 함께 설치하려면 다음 스크립트를 사용합니다.
 
 ```bash
 bash scripts/install-macos.sh --target "$HOME/develop/codexteams"
 ```
 
-기본 대상도 `$HOME/develop/codexteams`입니다. 기존의 비어 있지 않은 폴더는 덮어쓰지 않습니다. `--copy-only`는 소스만 복사하고 의존성 설치나 Pi 설정 변경을 하지 않습니다.
+기존의 비어 있지 않은 대상 폴더는 덮어쓰지 않습니다. `--copy-only`는 소스만 복사하며 명령 등록이나 Pi 설정 변경을 하지 않습니다. Pi가 관리하는 Git 설치 폴더는 업데이트 때 다시 맞춰질 수 있으므로 그 폴더에서 개발하지 않습니다.
 
-설치 소스와 범위의 동작은 [Pi 패키지 문서](https://pi.dev/docs/latest/packages), 관리 명령은 [Pi CLI 문서](https://pi.dev/docs/latest/cli)를 참고하세요. 실제 검증 범위는 [검증 기록](docs/verification.md)에 있습니다.
+Pi 확장 설치는 [Pi 패키지 문서](https://pi.dev/docs/latest/packages), 관리 명령은 [Pi CLI 문서](https://pi.dev/docs/latest/cli)를 참고하세요. 검증 범위는 [검증 기록](docs/verification.md)에 있습니다.
 
 ## 첫 프로젝트
 
-작업할 앱의 프로젝트 폴더에서 Pi를 실행하고 Pi의 프로젝트 신뢰 상태와 로그인을 확인합니다.
+작업할 앱의 프로젝트 폴더에서 실행합니다. 처음 연결할 때는 목표 없이 `codexteams`로 Pi를 열고 프로젝트 신뢰 상태·로그인·역할별 프로필을 확인합니다. 설정 후 Pi 안에서 `/teams launch <목표>`를 사용하거나, Pi를 닫고 아래 명령으로 새 목표를 시작합니다.
 
 `/model`에서 실제 provider/model 이름을 먼저 확인하세요. 기본 프로필의 `openai`가 사용자의 로그인 경로와 같다고 가정하지 않습니다. 모델이 없거나 해당 effort를 지원하지 않으면 실행을 중단하며, `/teams profile`로 계정에 표시되는 정확한 조합을 지정할 수 있습니다. 이 개발 과정에서는 사용자의 실제 모델 사용 권한을 확인하지 않았습니다.
 
-```text
-/teams start 간단한 Mac 디스크 용량 관리 앱을 만들어 줘
-/teams status
-/teams run
+```bash
+codexteams "간단한 Mac 디스크 용량 관리 앱을 만들어 줘"
 ```
 
-`start`는 파일을 읽어 계획을 생성하고, `run`은 준비된 작업을 실제로 수행합니다. 계획은 부모 세션과 별개로 지정된 planner 모델에서 생성합니다.
+`codexteams "목표"`와 `/teams launch <목표>`는 새 프로젝트의 계획 생성과 준비된 작업 실행을 연결합니다. 계획만 확인하려면 `/teams start <목표>`를 사용하고, 이후 `/teams run`으로 실행합니다. planner는 부모 세션과 별도로 지정한 모델을 사용합니다.
 
 계획 생성 중에는 `add`를 사용할 수 없습니다. 계획이 끝난 뒤 후속 작업을 추가하세요. 일반 작업이나 검증 명령 실행 중에는 후속 작업을 추가할 수 있습니다.
 
@@ -125,6 +155,7 @@ bash scripts/install-macos.sh --target "$HOME/develop/codexteams"
 | 명령 | 동작 |
 |---|---|
 | `/teams` 또는 `status` | 작업 목록과 알려진 사용량 |
+| `launch <목표>` | 새 프로젝트 계획 생성 후 준비된 작업 실행. 기존 프로젝트는 상태 표시 |
 | `start <목표>` | 읽기 전용 계획 생성 |
 | `add <역할> <내용>` | 후속 작업 추가 |
 | `run [id]` | 준비된 작업 순차 실행 |

@@ -36,9 +36,8 @@ test("registered package handles real Pi commands and releases its project lock 
   const events = stdout.trim().split("\n").map(line => JSON.parse(line));
   assert.equal(events.some(event => event.type === "agent_start"), false);
   const messages = events.filter(event => event.type === "message_end" && event.message?.customType === "codexteams");
-  assert.equal(messages.length, 4);
   assert.match(messages[0].message.content, /teams start/);
-  assert.match(messages[2].message.content, /Host integration fixture/);
+  assert.equal(messages.some(message => message.message.content.includes("Host integration fixture")), true);
   const state = JSON.parse(readFileSync(join(project, ".codexteams", "state.json"), "utf8"));
   assert.equal(state.tasks.length, 1);
   assert.equal(state.tasks[0].description, "Host integration fixture");

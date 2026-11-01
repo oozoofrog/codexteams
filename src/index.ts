@@ -11,6 +11,7 @@ import type { ModelProfile, TaskRole } from "./core/types.ts";
 
 const HELP = `## codexteams
 
+\`/teams launch <목표>\` — 새 프로젝트 계획을 만들고 준비된 작업 실행
 \`/teams start <목표>\` — 프로젝트를 읽고 작업 계획 생성
 \`/teams run [id]\` — 준비된 작업 실행
 \`/teams add <developer|designer|reviewer> <내용>\` — 후속 작업 추가
@@ -44,7 +45,7 @@ export default function codexteams(pi: ExtensionAPI): void {
 
   const display = (content: string) => pi.sendMessage({ customType: "codexteams", content, display: true }, { triggerTurn: false });
   const notify = (ctx: ExtensionContext, text: string, level: "info" | "warning" | "error" = "info") => {
-    try { if (ctx.hasUI) ctx.ui.notify(text, level); } catch { /* UI may be gone after shutdown */ }
+    try { if (ctx.hasUI) ctx.ui.notify(text, level); else display(text); } catch { /* UI may be gone after shutdown */ }
   };
   const showWidget = () => {
     if (!context?.hasUI || !controller) return;
@@ -62,8 +63,13 @@ export default function codexteams(pi: ExtensionAPI): void {
     return controller;
   }
 
-  function background<T>(work: Promise<T>, ctx: ExtensionContext, completed: (value: T) => string): void {
+  async function operation<T>(work: Promise<T>, ctx: ExtensionContext, completed: (value: T) => string): Promise<void> {
     const startedIn = generation;
+    if (!ctx.hasUI) {
+      const value = await work;
+      if (startedIn === generation) { notify(ctx, completed(value)); showWidget(); }
+      return;
+    }
     void work.then(value => {
       if (startedIn !== generation) return;
       notify(ctx, completed(value)); showWidget();
@@ -80,7 +86,7 @@ export default function codexteams(pi: ExtensionAPI): void {
       context = ctx;
       const [action, rest] = splitArgument(args);
       try {
-        if (!action || action === "status") {
+        if (!action || action === "status" || (action === "launch" && !rest.trim())) {
           const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
           display(state ? formatBoard(state, controller?.currentActivity) : HELP); return;
         }
@@ -91,21 +97,29 @@ export default function codexteams(pi: ExtensionAPI): void {
           if (!task) throw new Error("작업 ID를 확인하세요. /teams status");
           display(formatTask(task)); return;
         }
-        if (!["start", "add", "run", "resume", "check", "accept", "profile", "cancel", "recover"].includes(action)) throw new Error("알 수 없는 명령입니다. /teams help");
+        if (action === "launch") {
+          const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
+          if (state && (state.goal || state.tasks.length || state.planningAttempts.length)) {
+            display(`${formatBoard(state, controller?.currentActivity)}\n\n기존 프로젝트를 표시했습니다. /teams run, /teams resume <id> 또는 /teams recover로 이어가세요.`);
+            return;
+          }
+        }
+        if (!["launch", "start", "add", "run", "resume", "check", "accept", "profile", "cancel", "recover"].includes(action)) throw new Error("알 수 없는 명령입니다. /teams help");
         const team = await getController(ctx);
         switch (action) {
-          case "start": background(team.start(rest), ctx, tasks => `${tasks.length}개 작업을 준비했습니다. /teams status에서 확인한 뒤 /teams run으로 시작하세요.`); break;
+          case "launch": await operation(team.launch(rest), ctx, summary => `실행 ${summary.executed.length}개 · 검토 대기 ${summary.waitingReview.length}개 · 남은 대기 ${summary.blocked.length}개. /teams status`); break;
+          case "start": await operation(team.start(rest), ctx, tasks => `${tasks.length}개 작업을 준비했습니다. /teams status에서 확인한 뒤 /teams run으로 시작하세요.`); break;
           case "add": {
             const [role, content] = splitArgument(rest);
             if (role === "planner") throw new Error("planner는 작업 담당 역할이 아닙니다.");
             const task = team.add(parseRole(role) as TaskRole, content); notify(ctx, `${task.id} 추가`); break;
           }
-          case "run": background(team.run(rest.trim() || undefined), ctx, summary => `실행 ${summary.executed.length}개 · 검토 대기 ${summary.waitingReview.length}개 · 남은 대기 ${summary.blocked.length}개. /teams status`); break;
+          case "run": await operation(team.run(rest.trim() || undefined), ctx, summary => `실행 ${summary.executed.length}개 · 검토 대기 ${summary.waitingReview.length}개 · 남은 대기 ${summary.blocked.length}개. /teams status`); break;
           case "resume": {
-            const [id, instruction] = splitArgument(rest); background(team.resume(id, instruction), ctx, () => `${id} 실행이 끝났습니다. 결과를 확인하세요.`); break;
+            const [id, instruction] = splitArgument(rest); await operation(team.resume(id, instruction), ctx, () => `${id} 실행이 끝났습니다. 결과를 확인하세요.`); break;
           }
           case "check": {
-            const [id, command] = splitArgument(rest); background(team.check(id, command), ctx, () => `${id} 검증 기록을 저장했습니다. /teams show ${id}`); break;
+            const [id, command] = splitArgument(rest); await operation(team.check(id, command), ctx, () => `${id} 검증 기록을 저장했습니다. /teams show ${id}`); break;
           }
           case "accept": team.accept(rest.trim()); notify(ctx, `${rest.trim()} 수락 완료`); break;
           case "profile": {

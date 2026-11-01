@@ -1,4 +1,30 @@
-# codexteams 0.1.0 검증 기록
+# codexteams 검증 기록
+
+## 0.2.0 launcher — 2026-11-01
+
+기준 커밋 `7c13df9`에서 실행 명령, 계획·실행 연결과 설치 안내를 추가했다. 환경은 macOS 27.2, Node v26.12.1, Pi 1.4.0이다.
+
+| 검증 | 결과 |
+|---|---|
+| `npm run check` | exit 0. TypeScript 통과, **117개 통과 / 실패 0 / 건너뜀 0** |
+| 실제 Pi 로더 | 확장 1개, `teams` 명령과 조회 도구 등록, 오류 0 |
+| npm 패키지 구성 | `bin/codexteams.mjs`와 소스 포함. 설치된 명령의 버전 0.2.0 확인 |
+| 물리 Pi peer가 없는 설치본 | tarball을 격리 npm prefix에 설치. 실제 Pi와 loopback 프로토콜 fixture로 상태 조회·계획·worker Bash·검토 대기·잠금 해제·기존 상태 보존 통과 |
+| 실제 TTY | Pi TUI의 codexteams 안내 표시, Ctrl-D 정상 종료, 프로젝트 상태 생성 없음 |
+| 실제 Mac 설치 스크립트 | 별도 대상·npm prefix·Pi 설정에서 복사, 의존성 설치, CLI와 일반 Pi 확장 등록, 버전·조회 확인 |
+| 독립 검토 | 세 작업의 요구사항·코드 품질 PASS. 아래 두 지적 수정 후 남은 중대한 결함 없음 |
+
+### 수정한 경계 조건
+
+- 계획부터 첫 작업까지 하나의 취소 단위로 묶었다. 계획 중 추가는 차단하고 실행 중 추가는 허용한다. 계획 직후 취소·종료·소유권 상실 시 worker를 시작하지 않는다.
+- 기존 목표·작업·계획 이력은 표시하며 자동 재계획·재시도하지 않는다. 프로필만 설정된 프로젝트는 첫 목표를 시작할 수 있다. 사용자 수락과 복구 확인을 유지한다.
+- Pi가 파이프 입력을 초기 slash command 앞에 붙이면 일반 모델 프롬프트가 되는 경로를 발견했다. 비어 있지 않은 비TTY 입력은 Pi 실행 전에 거부한다.
+- Pi text print mode는 확장의 custom 메시지를 출력하지 않는다. 비TTY 입출력은 명시적으로 JSONL을 선택한다. 실제 설치본의 조회·실패·완료 출력으로 검증했다.
+- 원래 tar 파이프에서 `Write error`를 재현했다. private 임시 archive를 만든 뒤 추출하고 EXIT trap으로 정리하도록 바꿨다. 정확한 기존 파이프 실패 원인은 확정하지 않았다.
+
+전체 RED·중간 실패·GREEN 로그와 TTY 기록: [/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification/launcher-0.2.0](/Users/oozoofrog/.codex/visualizations/2026/11/01/01a19675-e400-74a1-8b57-74b0a2ea8f2d/codexteams-verification/launcher-0.2.0). 로컬 프로토콜 fixture는 HTTP 요청 3회로 계획 응답·Bash 도구 요청·최종 응답을 반환했다. 유료 모델이나 실제 계정 인증은 사용하지 않았다.
+
+실제 계정 모델 entitlement·청구, 대화형 TUI에서 목표 실행부터 취소까지의 전체 흐름, Node 최소 버전 22.19.0 자체와 Windows는 검증하지 않았다. TTY 표시와 로컬 프로토콜 성공을 이 범위의 검증으로 확대하지 않는다.
 
 ## macOS 후속 검증 — 2026-11-01
 

@@ -110,31 +110,45 @@ export class TeamController {
   }
 
   async start(goal: string): Promise<Task[]> {
+    return this.exclusive(signal => this.plan(goal, signal), "planning");
+  }
+
+  async launch(goal: string): Promise<RunSummary> {
     return this.exclusive(async signal => {
       const before = this.snapshot();
-      if (before.tasks.length) throw new Error("이미 작업이 있습니다. 후속 작업은 /teams add로 추가하세요.");
-      const requested = goal.trim() || before.goal;
-      if (!requested || Buffer.byteLength(requested) > 16384) throw new Error("목표는 1~16384바이트로 입력하세요.");
-      if (before.goal && requested !== before.goal) throw new Error("기존 목표를 덮어쓰지 않습니다. 같은 목표로 재시도하거나 다른 프로젝트를 여세요.");
-      const profile = before.profiles.planner;
-      await this.options.validateProfile(profile); signal.throwIfAborted();
-      const attempt = this.newAttempt(profile);
-      this.store.update(state => { state.goal = requested; state.planningAttempts.push(attempt); });
-      this.notify("계획 생성 중");
-      const result = await this.executeAttempt(attempt, `사용자 목표:\n${requested}\n\n프로젝트를 조사해 실행할 첫 단계의 계획을 JSON으로 작성하세요.`, PLANNER_SYSTEM, READ_TOOLS, signal);
-      if (result.outcome !== "success") throw new Error(result.error || (result.outcome === "aborted" ? "계획 생성이 중단되었습니다." : "계획 생성 실패"));
-      let tasks: Task[];
-      try {
-        const time = new Date().toISOString();
-        tasks = parsePlan(result.text).map(task => ({ ...task, status: "queued", createdAt: time, updatedAt: time, attempts: [], checks: [] }));
-      } catch (error) {
-        this.applyAttempt(attempt.id, a => { a.outcome = "failed"; a.error = error instanceof Error ? error.message : String(error); });
-        throw error;
-      }
-      this.store.update(state => { state.tasks.push(...tasks); });
-      this.notify(`${tasks.length}개 작업 준비`);
-      return tasks;
+      if (before.goal || before.tasks.length || before.planningAttempts.length) throw new Error("기존 프로젝트가 있습니다. /teams status에서 확인한 뒤 run/resume/recover를 사용하세요.");
+      await this.plan(goal, signal);
+      signal.throwIfAborted();
+      if (this.closed) throw new Error("종료 중인 팀입니다.");
+      this.active!.kind = "execution";
+      return this.runQueue(signal);
     }, "planning");
+  }
+
+  private async plan(goal: string, signal: AbortSignal): Promise<Task[]> {
+    const before = this.snapshot();
+    if (before.tasks.length) throw new Error("이미 작업이 있습니다. 후속 작업은 /teams add로 추가하세요.");
+    const requested = goal.trim() || before.goal;
+    if (!requested || Buffer.byteLength(requested) > 16384) throw new Error("목표는 1~16384바이트로 입력하세요.");
+    if (before.goal && requested !== before.goal) throw new Error("기존 목표를 덮어쓰지 않습니다. 같은 목표로 재시도하거나 다른 프로젝트를 여세요.");
+    const profile = before.profiles.planner;
+    await this.options.validateProfile(profile); signal.throwIfAborted();
+    const attempt = this.newAttempt(profile);
+    this.store.update(state => { state.goal = requested; state.planningAttempts.push(attempt); });
+    this.notify("계획 생성 중");
+    const result = await this.executeAttempt(attempt, `사용자 목표:\n${requested}\n\n프로젝트를 조사해 실행할 첫 단계의 계획을 JSON으로 작성하세요.`, PLANNER_SYSTEM, READ_TOOLS, signal);
+    if (result.outcome !== "success") throw new Error(result.error || (result.outcome === "aborted" ? "계획 생성이 중단되었습니다." : "계획 생성 실패"));
+    let tasks: Task[];
+    try {
+      const time = new Date().toISOString();
+      tasks = parsePlan(result.text).map(task => ({ ...task, status: "queued", createdAt: time, updatedAt: time, attempts: [], checks: [] }));
+    } catch (error) {
+      this.applyAttempt(attempt.id, a => { a.outcome = "failed"; a.error = error instanceof Error ? error.message : String(error); });
+      throw error;
+    }
+    this.store.update(state => { state.tasks.push(...tasks); });
+    this.notify(`${tasks.length}개 작업 준비`);
+    return tasks;
   }
 
   add(role: TaskRole, description: string): Task {
@@ -172,19 +186,21 @@ export class TeamController {
   }
 
   async run(id?: string): Promise<RunSummary> {
-    return this.exclusive(async signal => {
-      const executed: string[] = [];
-      if (id && this.findTask(id).status !== "queued") throw new Error("대기 작업만 run할 수 있습니다. 수정·재시도는 /teams resume를 사용하세요.");
-      while (!signal.aborted) {
-        const state = this.snapshot();
-        const next = id ? this.findTask(id, state) : state.tasks.find(t => t.status === "queued" && t.dependsOn.every(dep => this.findTask(dep, state).status === "completed"));
-        if (!next || next.status !== "queued") break;
-        await this.runTask(next.id, signal); executed.push(next.id);
-        if (id || ["failed", "interrupted"].includes(this.findTask(next.id).status)) break;
-      }
+    return this.exclusive(signal => this.runQueue(signal, id));
+  }
+
+  private async runQueue(signal: AbortSignal, id?: string): Promise<RunSummary> {
+    const executed: string[] = [];
+    if (id && this.findTask(id).status !== "queued") throw new Error("대기 작업만 run할 수 있습니다. 수정·재시도는 /teams resume를 사용하세요.");
+    while (!signal.aborted) {
       const state = this.snapshot();
-      return { executed, blocked: state.tasks.filter(t => t.status === "queued").map(t => t.id), waitingReview: state.tasks.filter(t => t.status === "needs_review").map(t => t.id) };
-    });
+      const next = id ? this.findTask(id, state) : state.tasks.find(t => t.status === "queued" && t.dependsOn.every(dep => this.findTask(dep, state).status === "completed"));
+      if (!next || next.status !== "queued") break;
+      await this.runTask(next.id, signal); executed.push(next.id);
+      if (id || ["failed", "interrupted"].includes(this.findTask(next.id).status)) break;
+    }
+    const state = this.snapshot();
+    return { executed, blocked: state.tasks.filter(t => t.status === "queued").map(t => t.id), waitingReview: state.tasks.filter(t => t.status === "needs_review").map(t => t.id) };
   }
 
   async resume(id: string, instruction = ""): Promise<void> {
