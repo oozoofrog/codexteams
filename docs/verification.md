@@ -12,6 +12,7 @@
 | 물리 Pi peer가 없는 설치본 | tarball을 격리 npm prefix에 설치. 실제 Pi와 loopback 프로토콜 fixture로 상태 조회·계획·worker Bash·검토 대기·잠금 해제·기존 상태 보존 통과 |
 | 실제 TTY | Pi TUI의 codexteams 안내 표시, Ctrl-D 정상 종료, 프로젝트 상태 생성 없음 |
 | 실제 Mac 설치 스크립트 | 별도 대상·npm prefix·Pi 설정에서 복사, 의존성 설치, CLI와 일반 Pi 확장 등록, 버전·조회 확인 |
+| 공개 GitHub 설치 명령 | `718aad4` 푸시 후 README의 npm Git 설치를 별도 prefix에서 실행. CLI 0.2.0·소스 일치·실제 Pi 조회 확인. 물리 Pi peer 복사본·모델 호출·프로젝트 상태 생성 없음 |
 | 독립 검토 | 세 작업의 요구사항·코드 품질 PASS. 아래 두 지적 수정 후 남은 중대한 결함 없음 |
 
 ### 수정한 경계 조건
