@@ -1,5 +1,16 @@
 # codexteams 검증 기록
 
+## 2026-11-03 0.7.0 배포·로컬 설치
+
+- 현재 사용자 요청은 main 반영·원격 push·전역 Pi 확장 업데이트·CLI 설치를 포함한다. 제품 기준 `045585b`를 깨끗한 main에 fast-forward하고 원격에 반영했다. 추가 기능과 FiveBeat 개발은 수행하지 않았다.
+- 독립 검토에서 a8 manifest의 109개 파일이 모두 현재 소스와 일치했다. 기존 277개 테스트·typecheck·loader·SDK/TUI·RPC·Node 22 근거를 재사용했다. 이번 배포에서 전체 테스트나 실제 모델 개발 흐름을 다시 실행하지 않았다. 포함 문서가 달라진 패키지는 dry-run을 새로 확인했다.
+- 전역 Pi 확장과 CLI는 0.7.0이다. 설치 경로는 각각 `~/.pi/agent/git/github.com/oozoofrog/codexteams`와 `/opt/homebrew/lib/node_modules/codexteams`다. CLI의 PATH 진입점은 `/opt/homebrew/bin/codexteams`다. 설치 명령의 revision과 제품 파일 해시를 대조했다.
+- CLI `--version`·`--help`와 빈 폴더의 목표 없는 실행은 exit 0이다. JSONL의 `message_end/customType=codexteams`를 확인했고 `.codexteams`를 생성하지 않았다.
+- 일반 Pi RPC의 자동 탐색에서 전역 설치 경로의 `/teams` 한 개를 확인했다. 알려진 프로젝트의 로컬 리소스를 `--approve`로 해당 실행에서만 허용한 조회에서는 기존 로컬 소스의 `/teams` 한 개를 확인했다. 설정 파일은 변경하지 않았다.
+- 실제 120×30 PTY의 일반 `pi --no-session --offline`에서 `/teams` Home·새 요청 editor·취소 후 Home 복귀·닫기·정상 종료를 확인했다. 모델 요청과 사용자 수락을 수행하지 않았고 빈 검증 폴더는 비어 있다. 이 PTY 실행은 기존 사용자 창의 reload나 사용자의 최종 수락을 증명하지 않는다.
+- 기존 Pi PID 77936, 기존 설정·상태·인증 파일의 해시와 권한, FiveBeat 33개 파일의 해시를 유지했다. 전역·프로젝트 등록에서 관련 없는 설정을 변경하지 않았다. npm 공개 게시·강제 push·백업·자동 수락은 수행하지 않았다.
+- 원문 로그·설치 revision·보존 검사·독립 검토는 외부 `codexteams-request-flow-070/delivery-070`에 있다. 최초 메타데이터 조회에서 존재하지 않는 전역 npm lockfile을 기대한 오류는 `initial-identity.json`에 남겼다. 설치 실패가 아니며 실제 설치 명령과 파일 해시로 신원을 확인했다. VoiceOver와 장시간 사용성 수락은 미검증이다.
+
 ## 0.7.0 ID 없는 요청 흐름 — 검증·현재 Pi 적용 완료
 
 `/teams`의 **새 요청**에서 시작해 요청 이름으로 진행·결과·수정·재검증·중단·이어하기·수락을 선택한다. 수동 작업은 별도 화면에 유지한다. 수락에는 TUI/RPC 확인과 현재 구현·검증·독립 검토 근거가 필요하다. 확인 뒤 대상이나 근거가 바뀌면 거부한다. 요청과 writer의 수락 기록은 하나의 store update로 저장하며 과거 accepted-writer 조회는 상태를 이관하지 않는다.

@@ -1,6 +1,16 @@
 # Mac에서 작업 이어가기
 
-## 현재 0.7.0 — 검증·현재 Pi 적용 완료
+## 현재 0.7.0 — main 반영·전역 설치 확인
+
+2026-11-03 사용자 요청으로 main 반영·원격 push·전역 Pi 확장 업데이트·CLI 설치를 수행했다. 제품 기준 커밋은 `045585b`다. 아래 이전 전달 기록의 main·전역 설치 제외 조건은 당시 범위다.
+
+CLI는 `/opt/homebrew/bin/codexteams`이며 실제 파일은 `/opt/homebrew/lib/node_modules/codexteams/bin/codexteams.mjs`다. 전역 Pi 확장은 `~/.pi/agent/git/github.com/oozoofrog/codexteams`다. 두 설치본의 버전은 0.7.0이며 동결한 제품 파일과 일치한다. `--version`, `--help`, 빈 폴더의 목표 없는 JSONL 조회를 확인했다.
+
+일반 Pi의 자동 탐색에서 `/teams`가 한 번 등록된 것을 확인했다. 실제 120×30 PTY에서 `/teams` → 새 요청 → 취소 → Home → 닫기와 정상 종료를 확인했다. 새 검증 세션은 `--no-session --offline`으로 실행했고 모델 요청을 제출하지 않았다. 프로젝트 로컬 리소스를 신뢰한 별도 조회에서는 기존 로컬 소스가 한 번 선택됐다. 프로젝트 설정 변경은 필요하지 않았다.
+
+기존 Pi PID 77936과 작업·설정·인증·수락 기록, FiveBeat 파일은 보존했다. 기존 Pi에 새 reload를 수행했다고 주장하지 않는다. 배포 상세와 최종 설치 revision은 외부 `codexteams-request-flow-070/delivery-070`에 기록한다. VoiceOver·장시간 사용성·사용자의 최종 수락은 별도다.
+
+## 이전 0.7.0 전달 — 검증·프로젝트 Pi 적용 완료
 
 현재 작업트리는 `/Users/oozoofrog/.codex/worktrees/teams-session-navigation/codexteams`이며 브랜치는 `task/team-session-navigation`이다. `codexteams` 또는 Pi의 `/teams`에서 **새 요청**을 선택한다. 이후 요청 이름으로 진행과 결과를 확인하고 수정·재검증·중단·이어하기·수락을 선택한다. 수락은 별도 확인이 필요하다. ID를 사용하는 수동 명령은 고급 경로로 유지한다.
 

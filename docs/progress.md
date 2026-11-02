@@ -1,5 +1,11 @@
 # Implementation ledger — docs/plans/2026-11-01-pi-extension.md
 
+## 2026-11-03 0.7.0 배포 마무리
+
+- 사용자가 main 반영·원격 push·전역 Pi 확장 업데이트·CLI 설치를 명시했다. 이전 브랜치 게시 범위를 이번 전달 단계에 한해 확대했다. FiveBeat 확장과 새 기능 개발은 제외했다.
+- 기존 a8 동결 파일 109개가 모두 일치해 277개 테스트와 typecheck·loader·기술 검증을 재사용했다. 제품 기준 `045585b`를 main에 fast-forward하고 push했다.
+- CLI와 전역 Pi 확장을 0.7.0으로 설치하고 제품 해시를 확인했다. CLI 버전·도움말·빈 폴더 JSONL 조회, 일반 Pi의 확장 자동 탐색과 실제 PTY `/teams` 화면·새 요청 취소·정상 종료를 확인했다. 모델 개발 요청은 제출하지 않았다.
+- 기존 Pi·설정·상태·인증·수락 기록과 FiveBeat를 유지했다. 프로젝트 로컬 selector는 중복 없이 동작해 변경하지 않았다. 이번 문서 기록 외에 제품 코드는 변경하지 않았다. 최종 설치 revision과 검토 근거는 외부 `codexteams-request-flow-070/delivery-070`에서 추적한다.
 
 ## 2026-11-02 ID 없는 요청 흐름 0.7.0 — 검증·현재 Pi 적용 완료
 
