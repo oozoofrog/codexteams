@@ -3,7 +3,8 @@ import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-wo
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ActiveOperation } from "../core/controller.ts";
 import type { ProjectState, Task } from "../core/types.ts";
-import { safeDisplay, widgetLines } from "./format.ts";
+import { safeDisplay, states, widgetLines } from "./format.ts";
+import { requestStatus, requestTitle } from "./request-view.ts";
 
 export interface HomeAction { id: string; label: string; targetId?: string }
 export function homeActions(state: ProjectState, operation: ActiveOperation | undefined, id: string): HomeAction[] {
@@ -26,7 +27,7 @@ export function homeResultLines(task: Task): string[] {
 }
 
 type Choice = { id: string; label: string };
-type PanelSnapshot = { title: string; status?: string; lines?: string[]; choices: Choice[]; footer?: string };
+type PanelSnapshot = { title: string; status?: string; lines?: string[]; choices: Choice[]; footer?: string; onSelect?: (id: string) => void };
 export class HomePanelError extends Error {}
 /** Every panel owns its timer. Closing a panel never affects a controller operation. */
 export async function homePanel(ctx: ExtensionContext, snapshot: () => PanelSnapshot, registerClose: (close?: () => void) => void): Promise<string | undefined> {
@@ -35,6 +36,7 @@ export async function homePanel(ctx: ExtensionContext, snapshot: () => PanelSnap
     let selected = 0, scroll = 0, closed = false, initialized = false;
     let selectedId: string | undefined;
     let renderedChoices: Choice[] = [];
+    let renderedSelect: PanelSnapshot["onSelect"];
     const close = (value?: string) => { if (closed) return; closed = true; clearInterval(timer); registerClose(); done(value); };
     const timer = setInterval(() => { if (!closed) tui.requestRender(); }, 500);
     cleanup = () => { if (!closed) { closed = true; clearInterval(timer); registerClose(); } };
@@ -45,7 +47,7 @@ export async function homePanel(ctx: ExtensionContext, snapshot: () => PanelSnap
         if (!initialized) { selected = data.choices.length ? 0 : -1; initialized = true; }
         else if (selectedId) selected = data.choices.findIndex(choice => choice.id === selectedId);
         else selected = -1;
-        renderedChoices = data.choices;
+        renderedChoices = data.choices; renderedSelect = data.onSelect;
         selectedId = renderedChoices[selected]?.id;
         const available = Math.max(4, Math.min(18, tui.terminal.rows - 10));
         const lines = (data.lines ?? []).flatMap(line => wrapTextWithAnsi(safeDisplay(line), Math.max(1, width)));
@@ -60,7 +62,7 @@ export async function homePanel(ctx: ExtensionContext, snapshot: () => PanelSnap
         if (keys.matches(data, "tui.select.cancel")) { close(); return; }
         if (keys.matches(data, "tui.select.confirm")) {
           const id = choices[selected]?.id;
-          if (id && snapshot().choices.some(choice => choice.id === id)) close(id);
+          if (id && snapshot().choices.some(choice => choice.id === id)) { renderedSelect?.(id); close(id); }
           else tui.requestRender();
           return;
         }
@@ -78,16 +80,18 @@ export async function homePanel(ctx: ExtensionContext, snapshot: () => PanelSnap
   catch (error) { throw new HomePanelError(error instanceof Error ? error.message : String(error), { cause: error }); }
   finally { cleanup?.(); }
 }
-export function homeOverview(root: string, state: ProjectState | null, operation: ActiveOperation | undefined, activity: string, error: string): PanelSnapshot {
+export function homeOverview(root: string, state: ProjectState | null, operation: ActiveOperation | undefined, activity: string, error: string, manual = false): PanelSnapshot {
   const status = state ? widgetLines(state, activity, operation)[0] : "실행 없음 · 결과 확인 0개";
   const elapsed = operation ? Math.max(0, Math.floor((Date.now() - Date.parse(operation.startedAt)) / 1000)) : 0;
   const operationLines = operation ? [`경과 ${elapsed}초 · 시작 ${operation.startedAt} · 마지막 관찰 ${operation.lastActivityAt}`] : [];
-  const choices: Choice[] = state?.tasks.map(task => ({ id: `task:${task.id}`, label: `${operation?.taskId === task.id ? (operation.kind === "check" ? "검증 중" : "실행 중") : task.status === "needs_review" ? "결과 확인" : task.status === "completed" ? "수락 완료" : task.status === "queued" ? "대기" : task.status === "running" ? "실행 여부 확인" : task.status} · ${task.title}` })) ?? [];
-  if (operation) choices.unshift({ id: "progress", label: "현재 진행 보기 / 중단 요청" });
+  const managed = new Set(state?.teamMode?.requests.flatMap(r => r.taskIds) ?? []);
+  const amendments = new Set(state?.teamMode?.requests.flatMap(r => r.amendments?.map(a => a.requestId) ?? []) ?? []);
+  const choices: Choice[] = manual ? (state?.tasks.filter(t => !managed.has(t.id)).map(task => ({ id: `task:${task.id}`, label: `${task.title} · ${states[task.status]}` })) ?? []) : [{ id: "new-request", label: "새 요청" }, ...(state?.teamMode?.requests.filter(r => !amendments.has(r.id)).map((r, index) => ({ id: `request:${r.id}`, label: `[${index + 1}] ${r.receivedAt.slice(0, 16).replace("T", " ")} · ${requestStatus(state, r)} · ${requestTitle(r)}` })) ?? []), { id: "manual", label: "수동 작업" }];
+  if (operation && (!operation.taskId || !managed.has(operation.taskId))) choices.unshift({ id: "progress", label: "현재 진행 보기 / 중단 요청" });
   if (state?.recoveryRequired) choices.unshift({ id: "recover", label: "복구 내용 확인" });
   else if (!operation && state && (state.planningAttempts.some(a => !a.endedAt) || state.tasks.some(t => t.status === "running" || t.attempts.some(a => !a.endedAt) || t.checks.some(c => c.status === "running")))) choices.unshift({ id: "recovery-check", label: "실행 여부와 복구 내용 확인" });
-  if (!state?.tasks.length && !state?.goal) choices.push({ id: "goal", label: "새 목표 입력" });
-  else if (!state?.tasks.length && state?.goal && !operation) choices.push({ id: "retry-plan", label: "기존 목표로 계획 다시 만들기" });
-  choices.push({ id: "mode", label: state?.teamMode?.enabled ? "팀 모드 끄기" : "팀 모드 켜기" }, { id: "add", label: "새 작업 추가" }, { id: "help", label: "상세 / 도움말" });
+  if (manual && !state?.tasks.length && !state?.goal) choices.push({ id: "goal", label: "새 목표 입력" });
+  else if (manual && !state?.tasks.length && state?.goal && !operation) choices.push({ id: "retry-plan", label: "기존 목표로 계획 다시 만들기" });
+  choices.push({ id: "mode", label: state?.teamMode?.enabled ? "팀 모드 끄기" : "팀 모드 켜기" }, ...(manual ? [{ id: "add", label: "새 작업 추가" }, { id: "back-home", label: "요청 목록" }] : []), { id: "help", label: "상세 / 도움말" });
   return { title: `팀 · ${basename(root)}`, status, lines: [...operationLines, ...(error ? [`오류: ${error}`, "인증은 Pi /login, 모델 설정은 /teams profile에서 확인하세요."] : [])], choices };
 }

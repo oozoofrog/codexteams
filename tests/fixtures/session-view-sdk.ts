@@ -33,11 +33,11 @@ const ui = {
     };
     try {
       assert.equal(opts.overlay, true);
-      component = factory({ terminal: { rows: 30 }, requestRender() {} }, {}, { matches: (_: string, key: string) => key === "tui.select.cancel" }, close);
+      component = factory({ terminal: { rows: 30 }, requestRender() {} }, {}, { matches: (input: string, key: string) => ({ escape: "tui.select.cancel", down: "tui.select.down", enter: "tui.select.confirm" } as Record<string, string>)[input] === key }, close);
       const lines = component.render(120);
       const kind = lines.at(-1)?.includes("줄") ? "viewer" : "home";
       if (kind === "viewer") { viewers++; assert.ok(lines.length <= 18); assert.match(lines.at(-1), /줄/); }
-      else { homes++; assert.ok(lines.length <= 24); assert.match(lines[0], /팀/); assert.match(lines.join("\n"), /view fixture/); assert.match(lines.at(-1), /Enter.*Esc/); }
+      else { homes++; assert.ok(lines.length <= 24); assert.match(lines[0], /팀/); assert.match(lines.join("\n"), homes % 2 ? /수동 작업/ : /view fixture/); assert.match(lines.at(-1), /Enter.*Esc/); }
       active = { component, close, kind };
     } catch (error) { try { component?.dispose?.(); } finally { active = undefined; reject(error); } }
   }),
@@ -51,7 +51,7 @@ async function until(f: () => boolean) {
   throw Error(`timed out viewers=${viewers} homes=${homes} active=${active?.kind} errors=${errors.join("|")}`);
 }
 async function run(startView: boolean, replaceWhileOpen = false, openCommand = false) {
-  const expectedViewer = viewers + 1, expectedHome = homes + (replaceWhileOpen ? 0 : 1);
+  const expectedViewer = viewers + 1, expectedHome = homes + (replaceWhileOpen ? 0 : 2);
   const runtime = await createAgentSessionRuntime(createRuntime, { cwd: root, agentDir: agent, sessionManager: startView ? SessionManager.open(view.file) : SessionManager.open(parent.getSessionFile()!) });
   try {
     const bind = async () => {
@@ -64,13 +64,13 @@ async function run(startView: boolean, replaceWhileOpen = false, openCommand = f
     if (replaceWhileOpen) await runtime.switchSession(parent.getSessionFile()!);
     else active!.component.handleInput("escape");
     await until(() => runtime.session.sessionFile === parent.getSessionFile());
-    if (!replaceWhileOpen) { await until(() => homes >= expectedHome && active?.kind === "home"); active!.component.handleInput("escape"); await until(() => !active); }
+    if (!replaceWhileOpen) { await until(() => homes >= expectedHome - 1 && active?.kind === "home"); active!.component.handleInput("down"); active!.component.render(120); active!.component.handleInput("enter"); await until(() => homes >= expectedHome && active?.kind === "home"); active!.component.handleInput("escape"); await until(() => !active); }
     assert.equal(events, 0);
   } finally { active?.close(); await runtime.dispose(); }
   assert.deepEqual(readFileSync(stateFile), initialState);
 }
 try {
   await run(false); await run(true); await run(false, true); await run(false, false, true);
-  assert.equal(viewers, 4); assert.equal(homes, 3); assert.equal(disposed, 7);
+  assert.equal(viewers, 4); assert.equal(homes, 6); assert.equal(disposed, 10);
   console.log(JSON.stringify({ ok: true, viewers, homes, disposed, agentStarts: events }));
 } finally { active?.close(); rmSync(temp, { recursive: true, force: true }); }

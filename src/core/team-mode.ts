@@ -15,8 +15,9 @@ const initial = (): TeamModeState => ({ version: 1, enabled: false, generation: 
 
 /** Process-owned coordinator; no screen or Pi context is retained here. */
 export class TeamModeSupervisor {
-  private active?: { abort: AbortController; done: Promise<void> };
+  private active?: { id: string; abort: AbortController; done: Promise<void> };
   private execution?: Promise<void>;
+  private executionId?: string;
   private closed = false;
   private schedulingFailure?: unknown;
   private readonly store: ProjectStore;
@@ -58,22 +59,54 @@ export class TeamModeSupervisor {
     if (this.closed) throw new Error("팀 모드가 종료 중입니다.");
     const state = this.store.snapshot(), request = state.teamMode?.requests.find(r => r.id === id);
     if (!request || !["received", "classifying", "queued", "running", "paused", "blocked"].includes(request.status)) throw new Error("중단할 수 있는 요청이 아닙니다.");
+    this.store.update(s => { const r = s.teamMode!.requests.find(x => x.id === id)!; r.status = "stopping"; r.revision++; r.reason = "종료를 기다리고 있습니다."; });
+    await this.settleStop(id);
+  }
+
+  private async settleStop(id: string): Promise<void> {
+    const state = this.store.snapshot(), request = state.teamMode?.requests.find(r => r.id === id);
+    if (!request || request.status !== "stopping") return;
     const coordinatorActive = state.teamMode?.coordinatorAttempts.some(a => a.requestId === id && !a.endedAt);
     const operation = this.options.controller?.activeOperation;
     const executionActive = !!operation?.taskId && request.taskIds.includes(operation.taskId);
-    this.store.update(s => { const r = s.teamMode!.requests.find(x => x.id === id)!; r.status = "cancelled"; r.revision++; r.reason = "사용자가 중단했습니다."; });
-    if (coordinatorActive) this.active?.abort.abort();
+    const coordinatorDone = this.active?.id === id ? this.active.done : undefined;
+    const executionDone = this.executionId === id ? this.execution : undefined;
+    if (coordinatorActive || coordinatorDone) this.active?.abort.abort();
     if (executionActive) await this.options.controller?.cancel();
-    this.notify(`팀 요청 중단: ${id}`);
+    if (coordinatorDone) await coordinatorDone;
+    if (executionDone) await executionDone;
+    this.store.update(s => { const r = s.teamMode!.requests.find(x => x.id === id); if (r?.status === "stopping") { r.status = "cancelled"; r.reason = "사용자가 중단했습니다."; } });
+    this.notify("요청이 중단되었습니다.");
   }
 
   resume(id: string): void {
     if (this.closed) throw new Error("팀 모드가 종료 중입니다.");
     const snapshot = this.store.snapshot(), request = snapshot.teamMode?.requests.find(r => r.id === id);
     if (!snapshot.teamMode?.enabled || snapshot.recoveryRequired || !request || !["paused", "blocked", "cancelled", "failed", "awaiting_user_acceptance"].includes(request.status)) throw new Error("재개할 수 있는 요청이 아닙니다.");
-    if (this.options.controller?.activeOperation?.taskId && request.taskIds.includes(this.options.controller.activeOperation.taskId)) throw new Error("기존 작업의 종료를 기다리세요.");
+    if (request.status === "awaiting_user_acceptance" && snapshot.tasks.find(t => t.id === request.taskIds[0])?.acceptanceSource === "user") throw new Error("이전 수락 결과는 재개할 수 없습니다.");
+    if (this.active?.id === id || this.executionId === id || (this.options.controller?.activeOperation?.taskId && request.taskIds.includes(this.options.controller.activeOperation.taskId))) throw new Error("기존 작업의 종료를 기다리세요.");
     this.store.update(s => { const r = s.teamMode!.requests.find(x => x.id === id)!; if (r.status === "awaiting_user_acceptance") { r.checkpoint = "revalidate"; delete r.artifactDigest; } r.revision++; r.status = r.taskIds.length === 2 ? "queued" : "received"; delete r.reason; });
-    this.wake(); this.notify(`팀 요청 재개: ${id}`);
+    this.wake(); this.notify("요청을 이어갑니다.");
+  }
+
+  revise(id: string, instruction: string): void {
+    const state = this.store.snapshot(), request = state.teamMode?.requests.find(r => r.id === id);
+    if (this.closed || !state.teamMode?.enabled || state.recoveryRequired || !request || !(["awaiting_user_acceptance", "queued", "running", "paused", "blocked"].includes(request.status) && request.taskIds.length === 2) || !instruction.trim() || Buffer.byteLength(instruction) > 16384 || state.tasks.find(t => t.id === request.taskIds[0])?.acceptanceSource === "user") throw new Error("수정할 수 있는 요청이 아닙니다.");
+    const amendmentId = randomUUID(), now = new Date().toISOString();
+    this.store.update(s => {
+      const mode = s.teamMode!, r = mode.requests.find(x => x.id === id)!;
+      mode.requests.push({ id: amendmentId, text: instruction, origin: request.origin, sessionId: request.sessionId, receivedAt: now, revision: 1, status: "answered", taskIds: [], answer: "수정 요청을 접수했습니다." });
+      (r.amendments ??= []).push({ requestId: amendmentId, instruction, timing: "after_current", status: "pending" });
+      r.revision++; if (r.status !== "running") r.status = "queued"; r.checkpoint = "fix"; delete r.artifactDigest; delete r.reason; delete r.recheckOnly;
+    });
+    this.wake(); this.notify();
+  }
+
+  recheck(id: string): void {
+    const state = this.store.snapshot(), request = state.teamMode?.requests.find(r => r.id === id);
+    if (this.closed || !state.teamMode?.enabled || state.recoveryRequired || !request || request.status !== "awaiting_user_acceptance" || this.executionId === id || state.tasks.find(t => t.id === request.taskIds[0])?.acceptanceSource === "user") throw new Error("다시 검증할 수 있는 요청이 아닙니다.");
+    this.store.update(s => { const r = s.teamMode!.requests.find(x => x.id === id)!; r.revision++; r.status = "queued"; r.checkpoint = "revalidate"; r.recheckOnly = true; delete r.artifactDigest; delete r.reason; });
+    this.wake(); this.notify();
   }
 
   private schedule(): void {
@@ -83,7 +116,7 @@ export class TeamModeSupervisor {
     if (!request) return;
     const abort = new AbortController();
     const done = Promise.resolve().then(() => this.coordinate(request.id, abort.signal)).catch(error => { this.schedulingFailure = error; }).finally(() => { this.active = undefined; if (!this.closed) { this.schedule(); this.scheduleExecution(); } });
-    this.active = { abort, done };
+    this.active = { id: request.id, abort, done };
   }
 
   private async coordinate(id: string, signal: AbortSignal): Promise<void> {
@@ -107,7 +140,7 @@ export class TeamModeSupervisor {
           this.store.update(s => { const a = s.teamMode?.coordinatorAttempts.find(x => x.id === attempt.id); if (!a || a.endedAt) return; if (event.type === "process") a.workerPid = event.pid; else { a.usage = event.usage; if (event.model && !a.effectiveModels.includes(event.model)) a.effectiveModels.push(event.model); } });
         } });
       } catch (error) { result = { outcome: signal.aborted ? "aborted" : "failed", text: "", error: String(error), exitCode: null, usage: emptyUsage(), effectiveModels: [], sessionId: attempt.sessionId }; }
-      let cancelTarget: string | undefined;
+      let cancelTarget: string | undefined, stopTarget: string | undefined;
       this.store.update(s => {
         const m = s.teamMode!, a = m.coordinatorAttempts.find(x => x.id === attempt.id)!, r = m.requests.find(x => x.id === id)!;
         a.endedAt = new Date().toISOString(); a.outcome = signal.aborted ? "aborted" : result.outcome; a.text = result.text; a.error = result.error; a.usage = result.usage; a.effectiveModels = result.effectiveModels;
@@ -136,7 +169,7 @@ export class TeamModeSupervisor {
           } else if (proposal.kind === "stop") {
             const target = m.requests.find(x => x.id === proposal.targetRequestId);
             if (!target || target.id === id || !mode.requests.some(x => x.id === target.id && x.revision === target.revision) || !["received", "classifying", "queued", "running", "paused", "blocked"].includes(target.status)) throw new Error("중단 대상을 확인할 수 없습니다.");
-            target.status = "cancelled"; target.revision++; target.reason = "사용자 요청으로 중단했습니다."; cancelTarget = target.id;
+            target.status = "stopping"; target.revision++; target.reason = "종료를 기다리고 있습니다."; stopTarget = target.id;
             r.status = "answered"; r.answer = "중단 요청을 접수했습니다. 실행 중이면 종료를 확인합니다.";
           } else if (proposal.kind === "prioritize") {
             const positions = m.requests.map((item, index) => item.status === "queued" && item.taskIds.length === 2 ? index : -1).filter(index => index >= 0);
@@ -150,6 +183,7 @@ export class TeamModeSupervisor {
           m.events.push({ id: randomUUID(), requestId: id, kind: "applied", at: new Date().toISOString() });
         } catch { r.status = "blocked"; r.reason = "조율 응답을 검증할 수 없습니다."; }
       });
+      if (stopTarget) await this.settleStop(stopTarget);
       if (cancelTarget) {
         const current = this.store.snapshot(), target = current.teamMode?.requests.find(x => x.id === cancelTarget), operation = this.options.controller?.activeOperation;
         if (current.teamMode?.enabled && current.teamMode.generation === attempt.generation && target && operation?.taskId && target.taskIds.includes(operation.taskId)) await this.options.controller?.cancel();
@@ -158,7 +192,7 @@ export class TeamModeSupervisor {
       this.store.update(s => { const r = s.teamMode?.requests.find(x => x.id === id); if (r && (r.status === "received" || r.status === "classifying")) { r.status = "blocked"; r.reason = String(error).slice(0, 1000); } });
     }
     const finished = this.snapshot()?.requests.find(r => r.id === id);
-    this.notify(finished?.status === "answered" ? `팀 답변 · ${id}\n${finished.answer}` : finished?.status === "blocked" ? `팀 요청 대기 · ${id}\n${finished.reason}` : undefined);
+    this.notify(finished?.status === "answered" ? `답변 · ${finished.text.slice(0, 80)}\n${finished.answer}` : finished?.status === "blocked" ? `확인 필요 · ${finished.text.slice(0, 80)}\n${finished.reason}` : undefined);
   }
 
   private scheduleExecution(): void {
@@ -167,7 +201,8 @@ export class TeamModeSupervisor {
     const request = mode?.enabled && !state.recoveryRequired && mode.requests.find(r => r.status === "queued" && r.taskIds.length === 2);
     if (!request || !mode) return;
     const generation = mode.generation, revision = request.revision;
-    this.execution = Promise.resolve().then(() => this.execute(request.id, generation, revision)).catch(error => { this.schedulingFailure = error; }).finally(() => { this.execution = undefined; if (!this.closed) this.scheduleExecution(); });
+    this.executionId = request.id;
+    this.execution = Promise.resolve().then(() => this.execute(request.id, generation, revision)).catch(error => { this.schedulingFailure = error; }).finally(() => { this.execution = undefined; this.executionId = undefined; if (!this.closed) this.scheduleExecution(); });
   }
 
   private allowed(id: string, generation: number, revision: number): boolean {
@@ -177,6 +212,8 @@ export class TeamModeSupervisor {
 
   private async execute(id: string, generation: number, revision: number): Promise<void> {
     const controller = this.options.controller!;
+    const initial = this.store.snapshot(), queued = initial.teamMode?.requests.find(r => r.id === id);
+    if (!initial.teamMode?.enabled || initial.teamMode.generation !== generation || !queued || queued.revision !== revision || queued.status !== "queued") return;
     this.store.update(s => {
       const r = s.teamMode?.requests.find(x => x.id === id);
       if (!s.teamMode?.enabled || s.teamMode.generation !== generation || !r || r.revision !== revision || r.status !== "queued") throw new Error("작업 요청이 변경되었습니다.");
@@ -185,6 +222,7 @@ export class TeamModeSupervisor {
     const pause = (reason: string) => this.store.update(s => { const r = s.teamMode?.requests.find(x => x.id === id); if (r && r.status === "running") { if (s.teamMode?.enabled && s.teamMode.generation === generation && r.revision !== revision && r.amendments?.some(a => a.status === "pending")) { r.status = "queued"; r.checkpoint = "fix"; delete r.reason; } else { r.status = "paused"; r.reason = reason.slice(0, 16384); } } });
     try {
       let instruction = "", previousFailure = "";
+      const rechecking = this.store.snapshot().teamMode!.requests.find(r => r.id === id)?.recheckOnly === true;
       while (this.allowed(id, generation, revision)) {
         let state = this.store.snapshot(), request = state.teamMode!.requests.find(r => r.id === id)!;
         const [writerId, reviewerId] = request.taskIds;
@@ -235,8 +273,8 @@ export class TeamModeSupervisor {
         const verdict = parseReviewVerdict(attempt.text, identity);
         if (artifactDigest(this.store.root) !== digest) { pause("검토 중 파일 내용이 변경되었습니다."); return; }
         this.store.update(s => { s.teamMode!.reviewEvidence.push({ id: randomUUID(), requestId: id, implementationTaskId: writerId, implementationAttemptId: implementation.id, reviewerTaskId: reviewerId, reviewerAttemptId: attempt.id, artifactDigest: digest, verdict: verdict.verdict, checkIds, requestRevision: revision, scope, scopeDigest }); });
-        if (verdict.verdict === "pass") { this.store.update(s => { const r = s.teamMode!.requests.find(x => x.id === id)!; r.status = "awaiting_user_acceptance"; delete r.checkpoint; }); return; }
-        if (verdict.verdict === "blocked") { pause(verdict.findings.join("\n")); return; }
+        if (verdict.verdict === "pass") { this.store.update(s => { const r = s.teamMode!.requests.find(x => x.id === id)!; r.status = "awaiting_user_acceptance"; delete r.checkpoint; delete r.recheckOnly; }); return; }
+        if (verdict.verdict === "blocked" || (rechecking && verdict.verdict === "changes_required")) { pause(verdict.findings.join("\n")); return; }
         const failure = JSON.stringify({ digest, findings: verdict.findings });
         if (failure === previousFailure) { pause("파일 내용과 검토 결과가 바뀌지 않아 재시도를 중지했습니다."); return; }
         previousFailure = failure; instruction = verdict.findings.join("\n");
@@ -244,7 +282,7 @@ export class TeamModeSupervisor {
       }
       pause("팀 모드 상태가 변경되어 후속 단계를 시작하지 않았습니다.");
     } catch (error) { pause(error instanceof Error ? error.message : String(error)); }
-    finally { const request = this.snapshot()?.requests.find(r => r.id === id); this.notify(request ? `팀 요청 ${id} · ${request.status}${request.reason ? ` · ${request.reason}` : ""}` : undefined); }
+    finally { const request = this.snapshot()?.requests.find(r => r.id === id); this.notify(request ? `요청 · ${request.text.slice(0, 80)}${request.status === "awaiting_user_acceptance" ? " · 결과 확인 필요" : request.reason ? ` · 확인 필요: ${request.reason}` : ""}` : undefined); }
   }
 
   async whenIdle(): Promise<void> { while (this.active || this.execution) { if (this.active) await this.active.done; else if (this.execution) await this.execution; } }

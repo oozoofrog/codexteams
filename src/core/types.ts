@@ -137,10 +137,11 @@ export interface NavigationState { root: NavigationRoot; views: NavigationView[]
 export interface TeamModeRequest {
   id: string; text: string; origin: "interactive" | "rpc"; sessionId: string; receivedAt: string;
   streamingIntent?: "steer" | "followUp";
-  revision: number; status: "received" | "classifying" | "queued" | "running" | "paused" | "blocked" | "answered" | "awaiting_user_acceptance" | "cancelled" | "failed";
+  revision: number; status: "received" | "classifying" | "queued" | "running" | "paused" | "blocked" | "answered" | "awaiting_user_acceptance" | "accepted" | "stopping" | "cancelled" | "failed";
   taskIds: string[]; answer?: string; reason?: string; checks?: string[]; checkpoint?: "implementation" | "checks" | "review" | "fix" | "revalidate";
   amendments?: Array<{ requestId: string; instruction: string; timing: "after_current" | "interrupt_then_resume"; status: "pending" | "applied" }>;
-  artifactDigest?: string; fixInstruction?: string;
+  artifactDigest?: string; fixInstruction?: string; recheckOnly?: boolean;
+  receipt?: { acceptedAt: string; requestRevision: number; implementationTaskId: string; implementationAttemptId: string; reviewerTaskId: string; reviewerAttemptId: string; reviewEvidenceId: string; checkIds: string[]; artifactDigest: string; scopeDigest: string };
 }
 export interface CoordinatorAttempt extends Attempt { requestId: string; generation: number; requestRevision: number }
 export interface TeamModeEvent { id: string; requestId: string; kind: "received" | "applied" | "uncertain"; at: string }

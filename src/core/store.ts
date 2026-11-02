@@ -103,8 +103,8 @@ export class ProjectStore {
         }
       });
       // A persisted ON flag is not permission to replay requests after a process restart.
-      if (store.state.teamMode?.requests.some(r => ["received", "classifying", "queued", "running"].includes(r.status))) store.update(state => {
-        for (const request of state.teamMode!.requests) if (["received", "classifying", "queued", "running"].includes(request.status)) { request.status = "paused"; request.reason = "이전 요청은 명시적으로 재개해야 합니다."; }
+      if (store.state.teamMode?.requests.some(r => ["received", "classifying", "queued", "running", "stopping"].includes(r.status))) store.update(state => {
+        for (const request of state.teamMode!.requests) if (["received", "classifying", "queued", "running", "stopping"].includes(request.status)) { request.status = "paused"; request.reason = "이전 요청은 명시적으로 재개해야 합니다."; }
       });
       return store;
     } catch (error) { store.close(); throw error; }

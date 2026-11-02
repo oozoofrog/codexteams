@@ -1,6 +1,28 @@
 # codexteams 검증 기록
 
-## 0.6.0 Pi 자체 팀 모드 — 검증·현재 Pi 적용 완료
+## 0.7.0 ID 없는 요청 흐름 — 검증·현재 Pi 적용 완료
+
+`/teams`의 **새 요청**에서 시작해 요청 이름으로 진행·결과·수정·재검증·중단·이어하기·수락을 선택한다. 수동 작업은 별도 화면에 유지한다. 수락에는 TUI/RPC 확인과 현재 구현·검증·독립 검토 근거가 필요하다. 확인 뒤 대상이나 근거가 바뀌면 거부한다. 요청과 writer의 수락 기록은 하나의 store update로 저장하며 과거 accepted-writer 조회는 상태를 이관하지 않는다.
+
+실제 Astra task-9의 설계 뒤 실제 GPT 6.1 Terra task-10이 단독으로 제품을 작성했다. a8의 Node 26.12.1 전체 검사에서 typecheck와 **277개 테스트, 실패·취소·skip 0개**를 확인했다. 실제 loader와 package dry-run도 통과했다. 109개 제품·테스트·사용자 문서 파일을 외부 `codexteams-request-flow-070/product-freeze-a8-manifest.json`으로 고정했다. 실제 GPT 6.1 Sol task-11의 검토 4는 현재 소스와 회귀 근거를 PASS로 판정했다. 반환 모델은 각 `openai/gpt-6-astra`, `openai/gpt-6.1-terra`, `openai/gpt-6.1-sol`이며 high를 사용했다. 요청한 Normal의 native tier mapping은 확인하지 않았다.
+
+고정 소스의 외부 검증은 `workcheck-runs-a8`의 다음 세 실행에서 PASS다.
+
+| 실행 | 확인한 범위 |
+|---|---|
+| `ui-a8-01` | 실제 Pi SDK와 scripted TUI component의 표시·키 경로, 로컬 native write/check/독립 read, 검토 FAIL→수정→PASS, writer 없는 재검증, 명시적 수정과 최신 receipt 연결 |
+| 같은 SDK 실행의 열린 화면 | 같은 결과 component의 검증 중→PASS 갱신과 뒤로 이동. 같은 행동 component에 새 수락 행동이 표시된 뒤 정확한 대상의 확인 창 도달. 취소 후 상태 전체 바이트·호출 수·파일 불변 |
+| 같은 SDK 실행의 명령 재주입 | 공개 `sendUserMessage`로 두 수락 명령을 확장 origin에서 호출. 확인 대기와 false 응답 중 상태·파일·수락 기록 불변. 마지막 true는 격리된 synthetic fixture에만 적용 |
+| `midwork-a8-01` | 실제 Pi RPC 일반 입력의 중간 변경, 이전 worker와 하위 프로세스 종료 뒤 동일 작업·세션 재개, 새 지시·check·검토 연결. 자동 사용자 수락 없음 |
+| `node22-a8-01` | Node 22.19.0 격리 설치본의 accepted receipt 조회와 훼손 6종 거부. 고정 0.6 validator로 과거 형식 확인. Pi peer·실행 파일·TypeScript loader·모델 호출 없이 packaged JS 조회 |
+
+SDK 검증은 화면 label 선택과 실제 component의 `render`/`handleInput`을 사용한다. 공급자는 제품 상태나 파일을 대신 작성하지 않는다. 각 재검증은 최신 reviewer attempt와 새 check ID를 사용하며 writer attempt와 파일을 유지했다. 프로세스·잠금·private prompt 디렉터리 정리, 환경 복원과 제품 해시 불변도 통과했다. Node 22 검증은 SDK 상태의 별도 복사본을 사용했고 원본 바이트를 유지했다. 이 SDK 수락은 시뮬레이션한 fixture 확인이며 물리 키나 실제 사용자의 수락 증명이 아니다. RPC/print 확인 동작의 회귀는 별도 SDK 모의 UI 검사이며 raw RPC wire 확인을 주장하지 않는다.
+
+같은 Terminal/Pi 창 7016의 120×30 화면에 0.7.0을 reload했다. Home→새 요청→Esc는 기존 상태 바이트를 유지했다. 이어서 새 요청 editor에 읽기 전용 질문을 입력하고 모드 활성화를 확인했다. 실제 Astra high가 README를 읽고 `프로젝트 이름은 codexteams입니다.`라고 답했다. 조율 중과 답변 상태, 요청 선택→결과 보기→뒤로→Home을 관찰했다. 기존 개발 작업 11개·goal·profile과 사용자 수락 0개를 유지했다. 답변 뒤 읽기 전용 복귀도 상태 바이트를 바꾸지 않았다. OFF 전환과 reload 후 OFF·실행 없음의 기본 화면을 확인하고 그대로 두었다. 프로젝트 실행 설정 해시는 원본과 같다. `same-pi-result.png`, `same-pi-final-home.png`, `same-pi-final-summary.json`에 근거가 있다.
+
+초기 미완료 결과, 실제 Sol 검토 2의 7개 결함과 검토 3의 추가 5개 결함은 모두 보존했다. 같은 Terra 작업에서 수정했고 최종 Sol 검토가 이를 확인했다. 첫 a5 외부 실행의 계약 scope와 임시 cache 분류 실패도 당시 FAIL로 보존했다. 이후 통과를 과거 실패에 소급하지 않는다. 전역 CLI 교체·인증 변경·개발 결과 자동 수락은 하지 않았다. VoiceOver, 장시간 실제 작업과 사용자의 최종 사용성 수락은 확인하지 않았다. 이번 Git 반영 범위는 `task/team-session-navigation`이며 main 병합은 포함하지 않는다.
+
+## 0.6.0 Pi 자체 팀 모드 — 당시 검증·Pi 적용 완료
 
 현재 실제 Terra task-7의 12번째 시도가 작성을 마쳤다. Node 26.12.1에서 typecheck와 전체 247개 테스트가 통과했다. 실패·취소·skip은 0개다. focused 56개, loader와 package dry-run도 통과했다. 소스는 외부 `codexteams-team-mode-060/product-freeze-a12-manifest.json`의 93개 파일 해시로 고정했다. 실제 Sol task-8의 검토 4는 PASS이며 필요한 구현 수정은 남아 있지 않다. 같은 Pi/Terminal 창 7016에 원래 프로젝트 실행 설정을 바이트 단위로 복원하고 0.6.0을 reload했다.
 

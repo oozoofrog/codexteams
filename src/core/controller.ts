@@ -371,7 +371,7 @@ export class TeamController {
       const reviewer = state.tasks.find(item => item.id === request.taskIds[1]);
       const evidence = state.teamMode?.reviewEvidence.filter(item => item.requestId === request.id && item.implementationTaskId === id).at(-1);
       const relevantChecks = (request.checks ?? []).map(command => task.checks.filter(check => check.attemptId === task.attempts.at(-1)!.id && check.source === "team_coordinator" && check.command === command).at(-1));
-      if (request.status !== "awaiting_user_acceptance" || request.taskIds[0] !== id || !evidence || evidence.verdict !== "pass" || evidence.requestRevision !== request.revision || !evidence.scopeDigest || evidence.scopeDigest !== reviewScopeDigest(reviewScope(request, task, evidence.checkIds)) || evidence.implementationAttemptId !== task.attempts.at(-1)?.id || evidence.reviewerAttemptId !== reviewer?.attempts.at(-1)?.id || relevantChecks.some(check => check?.status !== "passed") || JSON.stringify(relevantChecks.map(check => check?.id)) !== JSON.stringify(evidence.checkIds)) throw new Error("현재 실행에 연결된 독립 검토와 검증 근거가 없습니다.");
+      if (request.amendments?.some(a => a.status === "pending") || request.status !== "awaiting_user_acceptance" || request.taskIds[0] !== id || !evidence || evidence.verdict !== "pass" || evidence.requestRevision !== request.revision || !evidence.scopeDigest || evidence.scopeDigest !== reviewScopeDigest(reviewScope(request, task, evidence.checkIds)) || evidence.implementationAttemptId !== task.attempts.at(-1)?.id || evidence.reviewerAttemptId !== reviewer?.attempts.at(-1)?.id || relevantChecks.some(check => check?.status !== "passed") || JSON.stringify(relevantChecks.map(check => check?.id)) !== JSON.stringify(evidence.checkIds)) throw new Error("현재 실행에 연결된 독립 검토와 검증 근거가 없습니다.");
       let digest: string;
       try { digest = artifactDigest(this.store.root); } catch { throw new Error("검토 파일을 확인할 수 없습니다."); }
       if (digest !== evidence.artifactDigest) throw new Error("검토 이후 파일 내용이 변경되었습니다. 다시 검토하세요.");
@@ -379,6 +379,12 @@ export class TeamController {
     this.store.update(state => {
       const t = this.findTask(id, state); const attempt = t.attempts.at(-1)!;
       t.status = "completed"; t.updatedAt = t.acceptedAt = new Date().toISOString(); t.acceptanceSource = "user"; t.acceptedAttemptId = attempt.id; t.acceptedCheckIds = t.checks.filter(c => c.attemptId === attempt.id).map(c => c.id);
+      if (request) {
+        const r = state.teamMode!.requests.find(item => item.id === request.id)!;
+        const evidence = state.teamMode!.reviewEvidence.filter(item => item.requestId === r.id && item.implementationTaskId === id).at(-1)!;
+        r.status = "accepted";
+        r.receipt = { acceptedAt: t.acceptedAt, requestRevision: r.revision, implementationTaskId: id, implementationAttemptId: attempt.id, reviewerTaskId: evidence.reviewerTaskId, reviewerAttemptId: evidence.reviewerAttemptId, reviewEvidenceId: evidence.id, checkIds: [...evidence.checkIds], artifactDigest: evidence.artifactDigest, scopeDigest: evidence.scopeDigest! };
+      }
     });
     this.notify(`${id}: 사용자 수락`);
   }

@@ -17,6 +17,7 @@ import { parseProfile, parseRole } from "./core/profiles.ts";
 import { runPiWorker } from "./runtime/pi-runner.ts";
 import { formatAttemptHistory, formatBoard, formatTask, resumeCandidates, widgetLines, safeDisplay } from "./ui/format.ts";
 import { HomePanelError, homeActions, homeOverview, homePanel, homeResultLines } from "./ui/home.ts";
+import { requestActions, requestDetailLines, requestResultLines, requestStatus, requestTitle, type RequestAction } from "./ui/request-view.ts";
 import type { ModelProfile, TaskRole } from "./core/types.ts";
 
 const HELP = `## codexteams
@@ -114,6 +115,19 @@ export default function codexteams(pi: ExtensionAPI): void {
     return found.controller;
   }
 
+  async function acquireForAction(ctx: ExtensionContext): Promise<{ owner: ProcessOwner; verify(): void }> {
+    const root = realpathSync(ctx.cwd), epoch = generation, sessionId = ctx.sessionManager.getSessionId(), originalOwner = registry.owners.get(root);
+    const before = originalOwner?.controller.snapshot() ?? ProjectStore.read(root);
+    if (!ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || before?.recoveryRequired) throw new Error("프로젝트 신뢰 또는 복구 상태를 확인하세요.");
+    const pending = getController(ctx), initializedOwner = registry.owners.get(root), team = await pending, selected = registry.owners.get(root);
+    const verify = () => {
+      const now = team.snapshot();
+      if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || ctx.sessionManager.getSessionId() !== sessionId || context.sessionManager.getSessionId() !== sessionId || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || !selected?.supervisor || selected !== initializedOwner || registry.owners.get(root) !== selected || selected.controller !== team || (originalOwner && selected !== originalOwner) || (before && (now.id !== before.id || Boolean(now.recoveryRequired) !== Boolean(before.recoveryRequired) || (now.teamMode?.enabled ?? false) !== (before.teamMode?.enabled ?? false) || (now.teamMode?.generation ?? 0) !== (before.teamMode?.generation ?? 0))) || now.recoveryRequired) throw new Error("프로젝트 또는 세션이 변경되었습니다. 다시 시도하세요.");
+      team.store.assertOwner();
+    };
+    verify(); return { owner: selected!, verify };
+  }
+
   async function operation<T>(work: Promise<T>, ctx: ExtensionContext, completed: (value: T) => string): Promise<void> {
     const startedIn = generation;
     if (!ctx.hasUI) {
@@ -204,9 +218,63 @@ export default function codexteams(pi: ExtensionAPI): void {
     await ctx.switchSession(view.file, { withSession: async () => {} });
   }
 
+  const actionLabels: Record<RequestAction, string> = { result: "결과 보기", revise: "수정 요청", recheck: "검증과 검토 다시 실행", resume: "이어하기", stop: "중단 요청", accept: "결과 수락", details: "상세 기록" };
+  function requestFence(ctx: ExtensionCommandContext, id: string) {
+    const epoch = generation, root = realpathSync(ctx.cwd), selectedOwner = registry.owners.get(root);
+    const initial = selectedOwner?.controller.snapshot() ?? ProjectStore.read(root);
+    const signature = (state: NonNullable<typeof initial>) => {
+      const request = state.teamMode?.requests.find(r => r.id === id);
+      if (!request) throw new Error("요청이 없습니다.");
+      const operation = selectedOwner?.controller.activeOperation;
+      return JSON.stringify({ project: state.id, recovery: state.recoveryRequired, mode: [state.teamMode?.enabled, state.teamMode?.generation], request, tasks: request.taskIds.map(tid => { const t = state.tasks.find(x => x.id === tid); return t && { id: t.id, status: t.status, attempt: t.attempts.at(-1)?.id, outcome: t.attempts.at(-1)?.outcome, checks: t.checks.map(c => [c.id, c.status, c.attemptId]) }; }), evidence: state.teamMode?.reviewEvidence.filter(e => e.requestId === id), operation: operation?.taskId && request.taskIds.includes(operation.taskId) ? operation.id : undefined });
+    };
+    if (!initial) throw new Error("요청이 없습니다.");
+    const captured = signature(initial);
+    return (enabledByAction = false) => {
+      if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || registry.owners.get(root) !== selectedOwner) throw new Error("프로젝트 또는 세션이 변경되었습니다. 다시 선택하세요.");
+      selectedOwner?.controller.store.assertOwner();
+      const now = selectedOwner?.controller.snapshot() ?? ProjectStore.read(root);
+      if (!now) throw new Error("요청 또는 결과가 변경되었습니다. 다시 선택하세요.");
+      const comparable = structuredClone(now);
+      if (enabledByAction) {
+        if (!comparable.teamMode?.enabled || comparable.teamMode.generation !== (initial.teamMode?.generation ?? 0) + 1) throw new Error("팀 모드가 변경되었습니다.");
+        comparable.teamMode.enabled = initial.teamMode?.enabled ?? false; comparable.teamMode.generation = initial.teamMode?.generation ?? 0;
+      }
+      if (signature(comparable) !== captured) throw new Error("요청 또는 결과가 변경되었습니다. 다시 선택하세요.");
+      return now;
+    };
+  }
+  async function dispatchRequest(ctx: ExtensionCommandContext, id: string, action: RequestAction, fence = requestFence(ctx, id)): Promise<void> {
+    let state = fence(), request = state.teamMode!.requests.find(r => r.id === id)!;
+    if (!requestActions(state, request).includes(action)) throw new Error("요청 행동이 변경되었습니다.");
+    if (action === "result" || action === "details") return;
+    if (action === "accept" && (!ctx.hasUI || !["tui", "rpc"].includes(ctx.mode))) throw new Error("결과 수락에는 Pi TUI 또는 RPC 확인이 필요합니다.");
+    let instruction: string | undefined;
+    if (action === "revise") { instruction = await ctx.ui.editor("수정 요청", ""); fence(); if (!instruction?.trim()) return; }
+    else if (action === "accept" || action === "stop" || action === "recheck" || (action === "resume" && !state.teamMode?.enabled)) {
+      const ok = await ctx.ui.confirm(actionLabels[action], action === "accept" ? `${safeDisplay(requestTitle(request))}\n현재 결과를 명시적으로 수락합니다.` : action === "resume" ? "팀 모드를 켜고 이 요청을 이어갑니다." : `${safeDisplay(requestTitle(request))}\n${actionLabels[action]}을 진행합니다.`);
+      fence(); if (!ok) return;
+    }
+    state = fence(); request = state.teamMode!.requests.find(r => r.id === id)!;
+    let selected = registry.owners.get(realpathSync(ctx.cwd));
+    if (!selected?.supervisor) {
+      const epoch = generation, root = realpathSync(ctx.cwd), expected = JSON.stringify(state);
+      await getController(ctx); selected = registry.owners.get(root);
+      if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || !selected?.supervisor || JSON.stringify(selected.controller.snapshot()) !== expected) throw new Error("팀 또는 요청이 변경되었습니다. 다시 선택하세요.");
+      selected.controller.store.assertOwner();
+      fence = requestFence(ctx, id); fence();
+    }
+    if (action === "resume" && !state.teamMode?.enabled) { await selected.supervisor!.setMode(true); fence(true); }
+    if (action === "stop") await selected.supervisor!.stop(id);
+    else if (action === "resume") selected.supervisor!.resume(id);
+    else if (action === "revise") selected.supervisor!.revise(id, instruction!);
+    else if (action === "recheck") selected.supervisor!.recheck(id);
+    else if (action === "accept") selected.controller.accept(request.taskIds[0]);
+  }
+
   async function homeLoop(ctx: ExtensionCommandContext): Promise<void> {
     const epoch = generation, root = realpathSync(ctx.cwd);
-    let error = "", selectedId: string | undefined, panel: "home" | "actions" | "result" = "home";
+    let error = "", selectedId: string | undefined, panel: "home" | "actions" | "result" = "home", manual = false;
     let baselineOwner = registry.owners.get(root);
     const current = () => registry.owners.get(root)?.controller.snapshot() ?? ProjectStore.read(root);
     const currentTeam = () => registry.owners.get(root)?.controller;
@@ -215,7 +283,7 @@ export default function codexteams(pi: ExtensionAPI): void {
       if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || !ctx.isProjectTrusted()) throw new Error("프로젝트 또는 세션이 변경되었습니다. 다시 선택하세요.");
       if (registry.owners.get(root) !== baselineOwner) throw new Error("팀 소유자가 변경되었습니다. 다시 선택하세요.");
       const now = current(), active = currentTeam();
-      if ((before?.id ?? null) !== (now?.id ?? null) || Boolean(before?.recoveryRequired) !== Boolean(now?.recoveryRequired)) throw new Error("팀 또는 복구 상태가 변경되었습니다. 다시 선택하세요.");
+      if ((before?.id ?? null) !== (now?.id ?? null) || Boolean(before?.recoveryRequired) !== Boolean(now?.recoveryRequired) || before?.teamMode?.generation !== now?.teamMode?.generation || before?.teamMode?.enabled !== now?.teamMode?.enabled) throw new Error("팀 또는 복구 상태가 변경되었습니다. 다시 선택하세요.");
       if (active) { if (registry.owners.get(root)?.controller !== active) throw new Error("팀 소유자가 변경되었습니다."); active.store.assertOwner(); }
       if (id) {
         const old = before?.tasks.find(t => t.id === id), task = now?.tasks.find(t => t.id === id);
@@ -243,6 +311,8 @@ export default function codexteams(pi: ExtensionAPI): void {
       const action = stopImmediately ? "stop" : await homePanel(ctx, () => ({ title: "현재 진행", lines: [widgetLines(current()!, currentTeam()?.currentActivity ?? "", currentTeam()?.activeOperation)[0], `시작 ${op.startedAt}`, `마지막 관찰 ${currentTeam()?.activeOperation?.lastActivityAt ?? op.lastActivityAt}`], choices: [{ id: "back", label: "뒤로" }, { id: "stop", label: "중단 요청" }] }), register);
       guard(before, undefined, op.id);
       if (action === "stop") {
+        const managed = before?.teamMode?.requests.find(r => op.taskId && r.taskIds.includes(op.taskId));
+        if (managed) { await dispatchRequest(ctx, managed.id, "stop", requestFence(ctx, managed.id)); return; }
         const ok = await ctx.ui.confirm("중단 요청", "현재 실행에 중단을 요청합니다. 종료가 확인될 때까지 기다립니다."); guard(before, undefined, op.id);
         if (ok) void currentTeam()!.cancel().catch(e => { if (epoch === generation) error = String(e); });
       }
@@ -252,14 +322,60 @@ export default function codexteams(pi: ExtensionAPI): void {
         baselineOwner = registry.owners.get(root);
         const before = current(), team = currentTeam(), operationAtOpen = team?.activeOperation;
         if (panel === "home") {
-          const choice = await homePanel(ctx, () => homeOverview(root, current(), currentTeam()?.activeOperation, currentTeam()?.currentActivity ?? "", error), register);
+          const choice = await homePanel(ctx, () => homeOverview(root, current(), currentTeam()?.activeOperation, currentTeam()?.currentActivity ?? "", error, manual), register);
           if (!choice || epoch !== generation) return;
           guard(before);
+          if (choice === "manual" || choice === "back-home") { manual = choice === "manual"; continue; }
+          if (choice === "new-request") {
+            const text = await ctx.ui.editor("새 요청", ""); guard(before);
+            if (!text?.trim()) continue;
+            if (!before?.teamMode?.enabled) {
+              const ok = await ctx.ui.confirm("팀 모드 켜기", "새 요청을 시작하면 일반 입력의 팀 접수도 켜집니다. 계속할까요?"); guard(before); if (!ok) continue;
+            }
+            if (!ctx.isIdle()) throw new Error("부모 Pi 실행이 끝난 뒤 요청하세요.");
+            const originalOwner = baselineOwner, acquired = await acquireForAction(ctx), selectedOwner = acquired.owner, target = selectedOwner.controller;
+            acquired.verify();
+            if (originalOwner && selectedOwner !== originalOwner) throw new Error("팀 소유자가 변경되었습니다.");
+            if (!originalOwner) baselineOwner = selectedOwner;
+            guard(before ?? target.snapshot());
+            if (!target.snapshot().teamMode?.enabled) {
+              const old = target.snapshot();
+              await baselineOwner!.supervisor!.setMode(true);
+              const now = target.snapshot();
+              if (epoch !== generation || !context || !ctx.isProjectTrusted() || registry.owners.get(root) !== baselineOwner || realpathSync(ctx.cwd) !== root || realpathSync(context.cwd) !== root || viewMarker(ctx) || isOriginalWorker(ctx) || now.id !== old.id || now.recoveryRequired || !now.teamMode?.enabled || now.teamMode.generation !== (old.teamMode?.generation ?? 0) + 1) throw new Error("프로젝트 또는 세션이 변경되었습니다.");
+              target.store.assertOwner();
+            }
+            baselineOwner!.supervisor!.ingest({ text, origin: "interactive", sessionId: ctx.sessionManager.getSessionId() });
+            continue;
+          }
+          if (choice.startsWith("request:")) {
+            const id = choice.slice(8);
+            while (epoch === generation) {
+              let selectedFence: ReturnType<typeof requestFence> | undefined;
+              const action = await homePanel(ctx, () => {
+                const latest = current(), item = latest?.teamMode?.requests.find(r => r.id === id);
+                const displayedFence = item && latest ? requestFence(ctx, id) : undefined;
+                return item && latest ? { title: requestTitle(item), status: requestStatus(latest, item), ...(!latest.teamMode?.enabled && item.status !== "accepted" ? { lines: ["수정 또는 재검증하려면 팀 모드를 켜세요."] } : {}), choices: requestActions(latest, item).map(id => ({ id, label: actionLabels[id] })), onSelect: () => { selectedFence = displayedFence; } } : { title: "요청 없음", choices: [] };
+              }, register);
+              if (!action) break;
+              if (action === "result" || action === "details") {
+                await homePanel(ctx, () => { const latest = current(), item = latest?.teamMode?.requests.find(r => r.id === id); return { title: actionLabels[action], lines: latest && item ? (action === "result" ? requestResultLines(latest, item) : requestDetailLines(latest, item)) : ["요청이 없습니다."], choices: [{ id: "back", label: "뒤로" }] }; }, register);
+                continue;
+              }
+              if (!selectedFence) throw new Error("표시된 요청을 다시 선택하세요.");
+              selectedFence(); await dispatchRequest(ctx, id, action as RequestAction, selectedFence); break;
+            }
+            continue;
+          }
           if (choice.startsWith("task:")) { selectedId = choice.slice(5); if (!current()?.tasks.some(t => t.id === selectedId)) throw new Error("작업이 변경되었습니다."); panel = "actions"; continue; }
           if (choice === "mode") {
             if (!before?.teamMode?.enabled && !ctx.isIdle()) throw new Error("부모 Pi 실행이 끝난 뒤 팀 모드를 켜세요.");
-            await getController(ctx); baselineOwner = registry.owners.get(root);
-            await baselineOwner!.supervisor!.setMode(!before?.teamMode?.enabled);
+            const originalOwner = baselineOwner;
+            const acquired = await acquireForAction(ctx), selected = acquired.owner, target = selected.controller, now = target.snapshot();
+            acquired.verify();
+            if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || !selected?.supervisor || selected.controller !== target || (originalOwner && selected !== originalOwner) || (before && (before.id !== now.id || Boolean(before.recoveryRequired) !== Boolean(now.recoveryRequired) || before.teamMode?.enabled !== now.teamMode?.enabled || before.teamMode?.generation !== now.teamMode?.generation)) || now.recoveryRequired) throw new Error("프로젝트 또는 팀 상태가 변경되었습니다.");
+            target.store.assertOwner();
+            await selected.supervisor.setMode(!before?.teamMode?.enabled);
             return;
           }
           if (choice === "help") { await homePanel(ctx, () => ({ title: "상세 / 도움말", lines: (current() ? formatBoard(current()!, currentTeam()?.currentActivity) : HELP).split("\n"), choices: [{ id: "back", label: "뒤로" }] }), register); guard(before); continue; }
@@ -465,22 +581,64 @@ export default function codexteams(pi: ExtensionAPI): void {
             const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
             const mode = state?.teamMode;
             const latest = mode?.coordinatorAttempts.at(-1);
-            display([`팀 모드: ${mode?.enabled ? "ON" : "OFF"}`, ...(mode?.requests.slice(-20).map(r => `${r.id} · ${r.status}${r.reason ? ` · ${r.reason}` : ""}${r.amendments?.length ? ` · 변경 대기 ${r.amendments.filter(a => a.status === "pending").length} · 반영 ${r.amendments.filter(a => a.status === "applied").length}` : ""}${r.answer ? `\n${r.answer}` : ""}`) ?? []), ...(controller?.busy ? [`작업/검증 진행 중: ${controller.currentActivity}`] : []), ...(latest ? [`조율: ${latest.endedAt ? latest.outcome : "진행 중"} · 요청 ${latest.profile.provider}/${latest.profile.model} ${latest.profile.effort} · 반환 ${latest.effectiveModels.join(", ") || "미확인"} · 사용 토큰 ${latest.usage.totalTokens ?? "미확인"}`] : [])].join("\n"));
+            display([`팀 모드: ${mode?.enabled ? "ON" : "OFF"}`, ...(mode?.requests.slice(-20).map(r => `${requestStatus(state!, r)} · ${requestTitle(r)}${r.reason ? ` · ${r.reason}` : ""}${r.answer ? `\n${r.answer}` : ""}`) ?? []), ...(controller?.busy ? [`작업/검증 진행 중: ${controller.currentActivity}`] : []), ...(latest ? [`조율: ${latest.endedAt ? latest.outcome : "진행 중"} · 요청 ${latest.profile.provider}/${latest.profile.model} ${latest.profile.effort} · 반환 ${latest.effectiveModels.join(", ") || "미확인"} · 사용 토큰 ${latest.usage.totalTokens ?? "미확인"}`] : [])].join("\n"));
             return;
           }
           if (sub === "on" && !ctx.isIdle()) throw new Error("부모 Pi 실행이 끝난 뒤 팀 모드를 켜세요.");
-          await getController(ctx);
-          await registry.owners.get(realpathSync(ctx.cwd))!.supervisor!.setMode(sub === "on");
+          const acquired = await acquireForAction(ctx); acquired.verify();
+          await acquired.owner.supervisor!.setMode(sub === "on");
           notify(ctx, sub === "on" ? "팀 모드 ON · 일반 입력을 팀에 접수합니다." : "팀 모드 OFF · 이미 실행 중인 작업은 계속됩니다.");
           return;
         }
         if (action === "request") {
-          const [verb, id] = splitArgument(rest);
-          if (!id || !["resume", "stop"].includes(verb)) throw new Error("사용법: /teams request resume|stop <id>");
-          await getController(ctx);
-          const supervisor = registry.owners.get(realpathSync(ctx.cwd))!.supervisor!;
-          if (verb === "resume") supervisor.resume(id.trim()); else await supervisor.stop(id.trim());
-          notify(ctx, verb === "resume" ? `요청 재개: ${id.trim()}` : `요청 중단: ${id.trim()}`); return;
+          const [verb, explicitId] = splitArgument(rest);
+          if (verb && !["resume", "stop", "accept", "revise", "recheck"].includes(verb)) throw new Error("사용법: /teams request [resume|stop|accept|revise|recheck] [id]");
+          const root = realpathSync(ctx.cwd), selected = registry.owners.get(root), state = selected?.controller.snapshot() ?? ProjectStore.read(root);
+          if (!state) { notify(ctx, "요청이 없습니다. 새 요청을 시작하세요."); return; }
+          const candidates = state.teamMode?.requests.filter(r => !verb || requestActions(state, r).includes(verb as RequestAction)) ?? [];
+          if (!candidates.length) { notify(ctx, "선택할 수 있는 요청이 없습니다."); return; }
+          const epoch = generation, sessionId = ctx.sessionManager.getSessionId();
+          const navigationState = () => {
+            if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || ctx.sessionManager.getSessionId() !== sessionId || context.sessionManager.getSessionId() !== sessionId || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || registry.owners.get(root) !== selected) throw new Error("프로젝트 또는 세션이 변경되었습니다.");
+            selected?.controller.store.assertOwner(); const now = selected?.controller.snapshot() ?? ProjectStore.read(root);
+            if (!now || now.id !== state.id) throw new Error("팀이 변경되었습니다."); return now;
+          };
+          let id = explicitId.trim();
+          if (!id) {
+            if (!ctx.hasUI) { display("요청을 선택하려면 Pi 화면 또는 명시적 요청 ID가 필요합니다."); return; }
+            const options = candidates.map((r, i) => `${requestStatus(state, r)} · ${requestTitle(r)} · ${r.receivedAt} · ${i + 1}`);
+            const selection = await ctx.ui.select("요청 선택", options);
+            if (selection === undefined) return;
+            const index = options.indexOf(selection); if (index < 0) throw new Error("요청 선택이 변경되었습니다.");
+            id = candidates[index].id; if (!navigationState().teamMode?.requests.some(r => r.id === id)) throw new Error("요청이 변경되었습니다.");
+          }
+          let action = verb as RequestAction;
+          const current = navigationState(), request = current.teamMode?.requests.find(r => r.id === id);
+          if (!request) throw new Error("요청이 없습니다.");
+          const fence = requestFence(ctx, id);
+          if (!action) {
+            if (!ctx.hasUI) { display(requestResultLines(current, request).join("\n")); return; }
+            const actions = requestActions(current, request), choice = await ctx.ui.select("요청 행동", actions.map(a => actionLabels[a]));
+            if (choice === undefined) return;
+            navigationState();
+            action = actions.find(a => actionLabels[a] === choice)!; if (!action) throw new Error("요청 행동이 변경되었습니다.");
+          }
+          if (action === "result" || action === "details") { const now = navigationState(), item = now.teamMode?.requests.find(r => r.id === id); if (!item) throw new Error("요청이 없습니다."); display((action === "result" ? requestResultLines(now, item) : requestDetailLines(now, item)).join("\n")); return; }
+          if (action === "accept" && (!ctx.hasUI || !["tui", "rpc"].includes(ctx.mode))) throw new Error("결과 수락에는 Pi TUI 또는 RPC 확인이 필요합니다.");
+          if (!ctx.hasUI) {
+            if (action === "revise" || action === "recheck") throw new Error("이 행동에는 Pi 화면의 확인 또는 수정 입력이 필요합니다.");
+            let active = selected;
+            if (!active?.supervisor) {
+              const epoch = generation, expected = JSON.stringify(current);
+              await getController(ctx); active = registry.owners.get(root);
+              if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || !active?.supervisor || JSON.stringify(active.controller.snapshot()) !== expected) throw new Error("팀 또는 요청이 변경되었습니다.");
+              active.controller.store.assertOwner();
+            } else fence();
+            if (action === "stop") { await active.supervisor!.stop(id); return; }
+            if (action === "resume") { active.supervisor!.resume(id); return; }
+            throw new Error("이 행동에는 Pi 화면의 확인 또는 수정 입력이 필요합니다.");
+          }
+          await dispatchRequest(ctx, id, action, fence); return;
         }
         if (action === "handoff-result") {
           const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
@@ -541,6 +699,20 @@ export default function codexteams(pi: ExtensionAPI): void {
           const saved = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
           if (!saved?.tasks.length) { notify(ctx, "재개할 작업이 없습니다. /teams status에서 작업을 확인하세요."); return; }
         }
+        if (action === "accept") {
+          if (!ctx.hasUI || !["tui", "rpc"].includes(ctx.mode)) throw new Error("결과 수락에는 Pi TUI 또는 RPC 확인이 필요합니다.");
+          const root = realpathSync(ctx.cwd), epoch = generation, ownerAtOpen = registry.owners.get(root), state = ownerAtOpen?.controller.snapshot() ?? ProjectStore.read(root), id = rest.trim();
+          const task = state?.tasks.find(t => t.id === id); if (!state || !task) throw new Error("작업 ID를 확인하세요.");
+          const managed = state.teamMode?.requests.find(r => r.taskIds.includes(id));
+          if (managed) { if (managed.taskIds[0] !== id) throw new Error("구현 결과를 선택하세요."); await dispatchRequest(ctx, managed.id, "accept"); return; }
+          const relevant = (s: typeof state) => { const t = s.tasks.find(x => x.id === id); return JSON.stringify({ project: s.id, recovery: s.recoveryRequired, mode: [s.teamMode?.enabled, s.teamMode?.generation], task: t }); };
+          const original = relevant(state);
+          const guardAccept = () => { const now = registry.owners.get(root); if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || now !== ownerAtOpen) throw new Error("프로젝트 또는 세션이 변경되었습니다."); now?.controller.store.assertOwner(); const s = now?.controller.snapshot() ?? ProjectStore.read(root); if (!s || relevant(s) !== original) throw new Error("작업 또는 결과가 변경되었습니다."); };
+          guardAccept(); const ok = await ctx.ui.confirm("결과 수락", `${safeDisplay(task.title)}\n현재 결과를 명시적으로 수락합니다.`); guardAccept(); if (!ok) return;
+          const team = ownerAtOpen?.controller ?? await getController(ctx);
+          if (!ownerAtOpen) { if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || relevant(team.snapshot()) !== original) throw new Error("작업 또는 결과가 변경되었습니다."); team.store.assertOwner(); } else guardAccept();
+          team.accept(id); notify(ctx, "결과를 수락했습니다."); return;
+        }
         const team = await getController(ctx);
         switch (action) {
           case "launch": await operation(team.launch(rest), ctx, summary => `실행 ${summary.executed.length}개 · 검토 대기 ${summary.waitingReview.length}개 · 남은 대기 ${summary.blocked.length}개. /teams status`); break;
@@ -587,7 +759,6 @@ export default function codexteams(pi: ExtensionAPI): void {
           case "check": {
             const [id, command] = splitArgument(rest); await operation(team.check(id, command), ctx, () => `${id} 검증 기록을 저장했습니다. /teams show ${id}`); break;
           }
-          case "accept": team.accept(rest.trim()); notify(ctx, `${rest.trim()} 수락 완료`); break;
           case "profile": {
             const [role, settings] = splitArgument(rest); const [model, effort] = splitArgument(settings);
             team.setProfile(parseRole(role), parseProfile(model, effort.trim())); notify(ctx, "다음 실행부터 새 프로필을 적용합니다."); break;
@@ -627,9 +798,9 @@ export default function codexteams(pi: ExtensionAPI): void {
       const state = current?.controller.snapshot() ?? ProjectStore.read(root);
       if (!state?.teamMode?.enabled) return { action: "continue" };
       if (event.images?.length) { notify(ctx, "팀 모드는 이미지 첨부를 지원하지 않습니다. 텍스트만 다시 보내세요.", "warning"); return { action: "handled" }; }
-      await getController(ctx);
-      const requestId = registry.owners.get(root)!.supervisor!.ingest({ text: event.text, origin: event.source, sessionId: ctx.sessionManager.getSessionId(), ...(event.streamingBehavior ? { streamingIntent: event.streamingBehavior } : {}) });
-      notify(ctx, `팀 요청 접수: ${requestId}`);
+      const acquired = await acquireForAction(ctx); acquired.verify();
+      const requestId = acquired.owner.supervisor!.ingest({ text: event.text, origin: event.source, sessionId: ctx.sessionManager.getSessionId(), ...(event.streamingBehavior ? { streamingIntent: event.streamingBehavior } : {}) });
+      notify(ctx, `요청 접수 · ${event.text.replace(/\s+/g, " ").slice(0, 80)} · 진행 확인은 /teams`);
     } catch (error) { notify(ctx, `팀 요청을 접수하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, "error"); }
     return { action: "handled" };
   });

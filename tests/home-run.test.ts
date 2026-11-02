@@ -18,7 +18,7 @@ test("explicit home start runs one queued task and closing home preserves its pe
   t.after(async () => { if (team.busy && release) release({ outcome: "aborted", text: "", exitCode: null, usage: emptyUsage(), effectiveModels: [], sessionId }); await team.shutdown(); if (processRegistry().owners.get(root)?.controller === team) processRegistry().owners.delete(root); rmSync(root, { recursive: true, force: true }); });
   team.add("developer", "start target");
   processRegistry().owners.set(root, { controller: team, registry: {} as any });
-  const choices = ["start target", "작업 시작", null]; let sawActive = false;
+  const choices = ["수동 작업", "start target", "작업 시작", null]; let sawActive = false;
   const ui = { notify() {}, setStatus() {}, setWidget() {}, async custom(factory: any) {
     await new Promise(resolve => setTimeout(resolve, 10));
     return await new Promise(resolve => {

@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import extension from "../src/index.ts";
+import { ProjectStore } from "../src/core/store.ts";
+import { TeamController } from "../src/core/controller.ts";
+import { TeamModeSupervisor } from "../src/core/team-mode.ts";
+import { processRegistry } from "../src/core/process-registry.ts";
+for (const action of ["mode", "new-request"] as const) for (const change of ["trust", "owner", "session"] as const) test(`Home ${action} rejects ${change} change during controller await`, { timeout: 5000 }, async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "request-mode-stale-"))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const store = ProjectStore.open(root), runner = async () => { throw Error("unexpected model"); };
+  const controller = new TeamController(store, { runner, validateProfile: async () => {} }), supervisor = new TeamModeSupervisor(store, { controller, runner, validateProfile: async () => {} }); processRegistry().owners.set(root, { controller, supervisor, registry: {} as any });
+  let trusted = true, armed = false, screens = 0; const session = SessionManager.create(root, root), original = session.getSessionDir.bind(session);
+  const owner = processRegistry().owners.get(root)!;
+  session.getSessionDir = () => { if (armed) { armed = false; queueMicrotask(() => { if (change === "trust") trusted = false; else if (change === "owner") processRegistry().owners.set(root, { ...owner }); else void events.get("session_start")!({}, ctx); }); } return original(); };
+  const ui = { notify() {}, setStatus() {}, setWidget() {}, async editor() { return "새 요청"; }, async confirm() { return true; }, async custom(factory: any) { return await new Promise(resolve => { let component: any; component = factory({ terminal: { rows: 30 }, requestRender() {} }, {}, { matches: (a: string, b: string) => a === b }, (v: unknown) => { component.dispose(); resolve(v); }); let lines = component.render(120); screens++; if (screens > 1) { component.handleInput("tui.select.cancel"); return; } const label = action === "mode" ? "팀 모드 켜기" : "새 요청"; for (let i = 0; i < 15 && !lines.some((l: string) => l.startsWith("→ ") && l.includes(label)); i++) { component.handleInput("tui.select.down"); lines = component.render(120); } assert.ok(lines.some((l: string) => l.startsWith("→ ") && l.includes(label))); if (action === "mode") armed = true; component.handleInput("tui.select.confirm"); }); } };
+  const events = new Map<string, Function>(); let command!: (s: string, c: ExtensionCommandContext) => Promise<void>; const api = { registerCommand: (_: string, v: { handler: typeof command }) => { command = v.handler; }, registerTool() {}, on: (n: string, f: Function) => events.set(n, f), sendMessage() {}, sendUserMessage() {} } as unknown as ExtensionAPI;
+  const ctx = { cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => trusted, sessionManager: session, modelRegistry: {}, ui } as unknown as ExtensionCommandContext;
+  if (action === "new-request") ui.confirm = async () => { armed = true; return true; };
+  extension(api); await events.get("session_start")!({}, ctx); await command("", ctx); assert.equal(store.snapshot().teamMode?.enabled ?? false, false); assert.equal(store.snapshot().teamMode?.requests.length ?? 0, 0); if (change === "trust") assert.equal(trusted, false); if (change === "owner") processRegistry().owners.set(root, owner); await events.get("session_shutdown")!({ reason: "quit" }, ctx);
+});

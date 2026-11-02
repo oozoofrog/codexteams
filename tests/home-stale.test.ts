@@ -13,7 +13,7 @@ test("accept confirmation cannot accept a result changed while the dialog is ope
   const root = realpathSync(mkdtempSync(join(tmpdir(), "codexteams-home-stale-"))); t.after(() => rmSync(root, { recursive: true, force: true }));
   const team = new TeamController(ProjectStore.open(root), { validateProfile: async () => {}, runner: async req => ({ outcome: "success", text: "original", exitCode: 0, usage: emptyUsage(), effectiveModels: [], sessionId: req.sessionId }) });
   team.add("developer", "stale target"); await team.run("task-1"); await team.shutdown();
-  const selections = ["stale target", "결과 수락", null]; let errorShown = false;
+  const selections = ["수동 작업", "stale target", "결과 수락", null]; let errorShown = false;
   const ui = { notify() {}, setStatus() {}, setWidget() {}, async confirm() {
     const other = ProjectStore.open(root); other.update(state => { state.tasks[0].updatedAt = "2030-01-01T00:00:00.000Z"; }); other.close(); return true;
   }, async custom(factory: any) {

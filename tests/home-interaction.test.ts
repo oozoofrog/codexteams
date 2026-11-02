@@ -14,7 +14,7 @@ test("home result loop does not dispatch blank revision or unconfirmed acceptanc
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const team = new TeamController(ProjectStore.open(root), { validateProfile: async () => {}, runner: async req => ({ outcome: "success", text: "실제 결과", exitCode: 0, usage: emptyUsage(), effectiveModels: [], sessionId: req.sessionId }) });
   team.add("developer", "시험 작업"); await team.run("task-1"); await team.shutdown();
-  const choices = ["시험 작업", "결과 확인", "수정 요청", "결과 수락", "뒤로", null, null];
+  const choices = ["수동 작업", "시험 작업", "결과 확인", "수정 요청", "결과 수락", "뒤로", null, null];
   let editors = 0, confirms = 0, messages = 0, timersDisposed = 0;
   const screens: string[] = [];
   const ui = {
@@ -44,6 +44,6 @@ test("home result loop does not dispatch blank revision or unconfirmed acceptanc
   extension(api); await events.get("session_start")!({}, ctx); await command("", ctx); await events.get("session_shutdown")!({ reason: "quit" }, ctx);
   const state = ProjectStore.read(root)!;
   assert.equal(state.tasks[0].status, "needs_review"); assert.equal(state.tasks[0].attempts.length, 1);
-  assert.equal(editors, 1); assert.equal(confirms, 1); assert.equal(messages, 0); assert.equal(timersDisposed, 7);
+  assert.equal(editors, 1); assert.equal(confirms, 1); assert.equal(messages, 0); assert.equal(timersDisposed, 8);
   assert.ok(screens.some(s => s.includes("실제 결과")));
 });

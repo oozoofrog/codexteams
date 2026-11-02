@@ -1,0 +1,21 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import extension from "../src/index.ts";
+import { ProjectStore } from "../src/core/store.ts";
+import { TeamController } from "../src/core/controller.ts";
+import { TeamModeSupervisor } from "../src/core/team-mode.ts";
+import { processRegistry } from "../src/core/process-registry.ts";
+for (const selectedAction of ["결과 보기", "상세 기록", "cancel"] as const) test(`request selectors allow progress and ${selectedAction}`, async t => {
+ const root = realpathSync(mkdtempSync(join(tmpdir(), "request-picker-"))); t.after(() => rmSync(root, { recursive: true, force: true })); let calls = 0;
+ const store = ProjectStore.open(root), runner = async () => { calls++; throw Error("unexpected model"); }, team = new TeamController(store, { runner, validateProfile: async () => {} }), supervisor = new TeamModeSupervisor(store, { controller: team, runner, validateProfile: async () => {} });
+ processRegistry().owners.set(root, { controller: team, supervisor, registry: {} as any }); await supervisor.setMode(true); store.update(s => { s.teamMode!.requests.push({ id: "r1", text: "same request", origin: "rpc", sessionId: "session", receivedAt: s.createdAt, revision: 1, status: "paused", taskIds: [] }); });
+ let step = 0; const messages: string[] = [], errors: string[] = [];
+ const ui = { notify(s: string) { errors.push(s); }, setStatus() {}, setWidget() {}, async select(_: string, options: string[]) { step++; if (step === 1) { store.update(s => { const r = s.teamMode!.requests[0]; r.status = "answered"; r.answer = "first answer"; }); return options[0]; } store.update(s => { s.teamMode!.requests[0].answer = "current answer"; }); return selectedAction === "cancel" ? undefined : options.find(o => o === selectedAction); } };
+ const events = new Map<string, Function>(); let command!: (s: string, c: ExtensionCommandContext) => Promise<void>; const pi = { registerCommand: (_: string, v: { handler: typeof command }) => { command = v.handler; }, registerTool() {}, on: (n: string, f: Function) => events.set(n, f), sendMessage(m: { content: string }) { messages.push(m.content); }, sendUserMessage() {} } as unknown as ExtensionAPI;
+ const ctx = { cwd: root, mode: "tui", hasUI: true, isProjectTrusted: () => true, sessionManager: SessionManager.create(root, root), modelRegistry: {}, ui } as unknown as ExtensionCommandContext;
+ extension(pi); await events.get("session_start")!({}, ctx); await command("request", ctx); assert.equal(step, 2); assert.equal(calls, 0); assert.deepEqual(errors, []); if (selectedAction !== "cancel") assert.match(messages.join("\n"), /current answer/); else assert.equal(messages.length, 0); await events.get("session_shutdown")!({ reason: "quit" }, ctx);
+});

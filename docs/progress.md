@@ -1,5 +1,21 @@
 # Implementation ledger — docs/plans/2026-11-01-pi-extension.md
 
+
+## 2026-11-02 ID 없는 요청 흐름 0.7.0 — 검증·현재 Pi 적용 완료
+
+- 사용자가 ID를 직접 입력하거나 내부 실행 단계를 알아야 하는 흐름을 거부했다. 새 요청·진행·결과·수정·중단·재개·수락을 요청 이름과 보이는 행동으로 끝내는 범위다. 설계/계획은 `2026-11-02-request-flow.md` 문서 두 곳에 있다.
+- 기준은 게시된 `8cd87f6`, 0.6.0이다. 247개 회귀와 실제 Pi RPC/worker transport/Node22/같은 Pi ON/OFF 근거는 그대로 보존한다. 기준 Git archive·111개 tracked 파일 해시·상태·프로젝트 설정은 외부 `codexteams-request-flow-070`에 보존했다.
+- 외부 고정 0.6 source로 같은 Pi를 전환하는 시도는 process registry의 canonical source identity에 거부됐다. unknown command가 일반 부모 입력으로 넘어간 것을 확인해 명시적으로 중단했다. 이 실행은 Astra 설계로 계산하지 않는다. 제품/기존 Task 변경은 없었고 원래 설정으로 복원한 뒤 실제 `/teams mode status`를 확인했다. 실패 원문은 보존했다. 당시 같은 canonical path의 로드된 0.6 graph를 유지했고 writer/reviewer 종료 전에는 reload하지 않았다.
+- 실제 Astra task-9가 요청 중심 Home, 공통 행동/선택 guard, atomic user receipt, 과거 수락의 읽기 전용 호환과 실제 상태 투영을 설계했다. 반환 모델은 `openai/gpt-6-astra` high다. Root는 현재 요구에 맞게 범위를 확정하고 기존 자연어 조율 protocol을 유지했다. 모델에 수락 권한을 추가하지 않는다.
+- 실제 Terra task-10이 단독으로 제품을 작성했고 실제 Sol task-11이 작성 종료 후 독립 검토했다. 각 high, Normal wire mapping 미확인이다. Root는 설계·계획·진행·검증·외부 근거와 프로젝트 selector를 소유한다. 당시 구현/검증 중이었으며 0.7의 실제 Pi 적용은 최종 검토 뒤에 수행했다.
+- 지원자는 격리된 실제 Pi SDK+scripted TUI component+loopback native worker proof를 외부에 준비했다. 제품 소스를 고정하기 전에는 실행하지 않았다. simulated key와 실제 사용자 수락은 구분한다. 새 interactive Pi, 전역 설치·인증 변경과 실제 개발 결과의 자동 수락은 하지 않는다.
+
+- a5의 252개 검사와 외부 기술 검증 뒤 실제 Sol 검토 2에서 7개 결함을 확인했다. 수락 확인 경계, 열린 화면 갱신, 자연어 중단의 종료 대기, 관련 요청만 비교하는 guard, Home의 비동기 소유권 검사, OFF 행동과 연결 기록을 같은 Terra 작업에서 수정했다. a7의 266개 검사와 외부 SDK 검증이 통과했으나 실제 Sol 검토 3에서 새 입력·모드 명령의 guard, 새로 표시된 행동의 fence, 읽기 전용 선택, 긴 한국어 중복 제목과 README 경로 5건을 추가로 확인했다. 모든 FAIL을 보존했다.
+- a8은 위 5건을 수정하고 전체 277개·typecheck·loader·pack·whitespace 검사를 통과했다. 작성이 끝난 109개 제품 파일을 고정했고 실제 Sol의 현재 소스 재검토와 외부 검증을 진행했다. 이 시점에는 같은 Pi 적용 전이었으며 실제 개발 결과 수락은 하지 않았다.
+
+- 최종 실제 Sol 검토 4는 위 5건과 기존 계약을 PASS로 확인했다. a8 고정 소스의 `ui-a8-01`, `midwork-a8-01`, `node22-a8-01`도 PASS다. 열린 결과/행동 화면의 진행 갱신, 새 수락 행동의 확인 창, 두 명령의 확장 origin 재주입 대기/취소, exact receipt와 종료 정리를 확인했다. synthetic fixture 수락과 실제 사용자 수락은 구분한다.
+- 같은 Pi 창 7016에 0.7을 reload했다. 120×30의 새 요청 취소는 상태를 바꾸지 않았고 새 읽기 전용 질문은 실제 Astra high가 답했다. 요청 결과·뒤로·Home과 OFF reload 유지가 통과했다. 기존 개발 작업 11개·목표·프로필·수락 0개와 원본 프로젝트 실행 설정을 유지했다. 실제 개발 결과는 수락하지 않았으며 전역 CLI는 0.2.1이다. 게시 범위는 최종 문서·package·staging 검사를 마친 현재 브랜치의 commit·push이며 main 병합은 포함하지 않는다.
+
 ## 2026-11-02 Pi 자체 팀 모드 0.6.0 — 검증·현재 Pi 적용 완료
 
 - 사용자가 Codex 대화의 조율을 명시적으로 거부했다. 제품 런타임은 Pi Teams만으로 ON/OFF와 일반 요청·중간 변경을 처리해야 한다. 현재 요구와 개발 시 Codex의 역할을 구분한다. 설계·계획은 `2026-11-02-pi-team-mode.md` 문서 두 곳에 기록했다.

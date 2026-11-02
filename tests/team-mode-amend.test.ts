@@ -39,3 +39,25 @@ test("after-current amendment is persisted while writer runs and applied to same
   assert.equal(store.snapshot().teamMode!.requests.find(r => r.id === target)?.status, "awaiting_user_acceptance");
   await supervisor.setMode(false);
 });
+
+test("visible revision during active writer waits and preserves exact instruction", { timeout: 10000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), "codexteams-mode-visible-revise-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q"], { cwd: root }); writeFileSync(join(root, ".gitignore"), ".codexteams/\n");
+  const store = ProjectStore.open(root); let release!: () => void; const writers: WorkerRequest[] = [];
+  const runner = async (request: WorkerRequest): Promise<WorkerResult> => {
+    let text = "done";
+    if (request.systemPrompt.includes("read-only team coordinator")) { const input = JSON.parse(request.prompt.split("\n").at(-1)!); text = JSON.stringify({ requestId: input.requestId, generation: input.generation, revision: input.revision, kind: "propose_plan", tasks: [{ id: "task", title: "Implement", description: "feature A", role: "developer", dependsOn: [], acceptance: ["works"] }], checks: [] }); }
+    else if (request.tools.includes("bash")) { writers.push(request); if (writers.length === 1) await new Promise<void>(resolve => { release = resolve; }); }
+    else { const identity = JSON.parse(request.prompt.match(/\{"implementationAttemptId"[^\n]+/)![0]); text = JSON.stringify({ implementationAttemptId: identity.implementationAttemptId, artifactDigest: identity.artifactDigest, checkIds: identity.checkIds, requestId: identity.requestId, requestRevision: identity.requestRevision, scopeDigest: identity.scopeDigest, verdict: "pass", findings: [] }); }
+    return { outcome: "success", text, exitCode: 0, usage: emptyUsage(), effectiveModels: [], sessionId: request.sessionId };
+  };
+  const controller = new TeamController(store, { runner, validateProfile: async () => {} });
+  const supervisor = new TeamModeSupervisor(store, { controller, runner, validateProfile: async () => {} });
+  t.after(async () => { release?.(); await supervisor.shutdown(); await controller.shutdown(); });
+  await supervisor.setMode(true); const id = supervisor.ingest({ text: "build", origin: "rpc", sessionId: "session" });
+  await wait(() => writers.length === 1);
+  supervisor.revise(id, "Keep exact instruction: A + B");
+  assert.equal(writers.length, 1); release(); await supervisor.whenIdle();
+  assert.equal(writers.length, 2); assert.equal(writers[0].sessionId, writers[1].sessionId); assert.match(writers[1].prompt, /Keep exact instruction: A \+ B/);
+  assert.equal(store.snapshot().teamMode!.requests.find(r => r.id === id)?.status, "awaiting_user_acceptance");
+});

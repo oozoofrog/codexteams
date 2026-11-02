@@ -14,6 +14,7 @@ import type { WorkerResult } from "../src/core/types.ts";
 function request(root: string) { return { schemaVersion: 1, requestId: "home-reserved", projectRoot: root, source: { kind: "codex", checkpoint: "stopped", stopped: true }, goal: "handoff goal", task: { title: "reserved handoff", description: "do it", role: "developer", acceptance: ["done"] }, context: { summary: "packet", completed: [], constraints: [], files: [], evidence: [] } }; }
 async function waitFor(predicate: () => boolean) { for (let i = 0; i < 250; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw Error("timed out waiting for operation"); }
 function harness(root: string, choices: (string | null)[], options: { role?: string | null; content?: string | null; onEditor?: () => void; trusted?: () => boolean } = {}) {
+  choices.unshift("수동 작업");
   const errors: string[] = [];
   const ui = { notify(message: string) { errors.push(message); }, setStatus() {}, setWidget() {},
     async select() { return options.role === null ? undefined : options.role ?? "designer"; },

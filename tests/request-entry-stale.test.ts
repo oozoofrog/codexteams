@@ -1,0 +1,23 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SessionManager, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import extension from "../src/index.ts";
+import { ProjectStore } from "../src/core/store.ts";
+import { TeamController } from "../src/core/controller.ts";
+import { TeamModeSupervisor } from "../src/core/team-mode.ts";
+import { processRegistry } from "../src/core/process-registry.ts";
+for (const action of ["input", "mode"] as const) for (const change of ["trust", "owner", "session"] as const) test(`${action} rejects ${change} change during acquisition`, { timeout: 5000 }, async t => {
+ const root = realpathSync(mkdtempSync(join(tmpdir(), "request-entry-"))); t.after(() => rmSync(root, { recursive: true, force: true })); let runs = 0;
+ const store = ProjectStore.open(root), runner = async () => { runs++; throw Error("unexpected model"); }, controller = new TeamController(store, { runner, validateProfile: async () => {} }), supervisor = new TeamModeSupervisor(store, { controller, runner, validateProfile: async () => {} }); const registry = processRegistry(); registry.owners.set(root, { controller, supervisor, registry: {} as any }); if (action === "input") await supervisor.setMode(true);
+ const owner = registry.owners.get(root)!; let trusted = true, armed = false; const session = SessionManager.create(root, root), original = session.getSessionDir.bind(session), events = new Map<string, Function>(); let command!: (s: string, c: ExtensionCommandContext) => Promise<void>;
+ const pi = { registerCommand: (_: string, v: { handler: typeof command }) => { command = v.handler; }, registerTool() {}, on: (n: string, f: Function) => events.set(n, f), sendMessage() {}, sendUserMessage() {} } as unknown as ExtensionAPI;
+ const ctx = { cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => trusted, sessionManager: session, modelRegistry: {}, ui: { notify() {}, setStatus() {}, setWidget() {} } } as unknown as ExtensionCommandContext;
+ session.getSessionDir = () => { if (armed) { armed = false; queueMicrotask(() => { if (change === "trust") trusted = false; else if (change === "owner") registry.owners.set(root, { ...owner }); else void events.get("session_start")!({}, ctx); }); } return original(); };
+ extension(pi); await events.get("session_start")!({}, ctx); const before = store.snapshot(); armed = true;
+ if (action === "input") await events.get("input")!({ source: "interactive", text: "new request" }, ctx); else await command("mode on", ctx);
+ const after = store.snapshot(); assert.equal(after.teamMode?.enabled ?? false, before.teamMode?.enabled ?? false); assert.equal(after.teamMode?.requests.length ?? 0, 0); assert.equal(runs, 0);
+ if (change === "owner") registry.owners.set(root, owner); await events.get("session_shutdown")!({ reason: "quit" }, ctx);
+});

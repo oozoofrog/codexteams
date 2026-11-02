@@ -4,13 +4,14 @@ import type { ActiveOperation } from "../core/controller.ts";
 
 export const safeDisplay = (text: string): string => text.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, " ");
 
-const states: Record<TaskStatus, string> = { queued: "대기", running: "진행", needs_review: "검토 대기", completed: "수락 완료", failed: "실패", interrupted: "중단", cancelled: "취소" };
+export const states: Record<TaskStatus, string> = { queued: "대기", running: "진행", needs_review: "검토 대기", completed: "수락 완료", failed: "실패", interrupted: "중단", cancelled: "취소" };
 const cell = (text: string) => text.replaceAll("|", "\\|").replace(/[\r\n]+/g, " ");
 const number = (value: number | null) => value === null ? "미확인" : value.toLocaleString("ko-KR");
 const routing = (role: string, profile: { provider: string; model: string; effort: string }, models: string[]) => `${role}: 요청 ${profile.provider}/${profile.model} / ${profile.effort} · 실제 응답 ${models.length ? models.join(", ") : "확인 대기"}`;
 
 export function resumeCandidates(state: ProjectState): { id: string; option: string }[] {
-  return state.tasks.filter(task => ["failed", "interrupted", "needs_review"].includes(task.status)).map(task => ({
+  const managed = new Set(state.teamMode?.requests.flatMap(request => request.taskIds) ?? []);
+  return state.tasks.filter(task => !managed.has(task.id) && ["failed", "interrupted", "needs_review"].includes(task.status)).map(task => ({
     id: task.id,
     option: `${task.title.replace(/[\r\n]+/g, " ")} · ${states[task.status]} · ${task.role} · ID: ${task.id}`,
   }));
@@ -49,7 +50,8 @@ export function formatTask(task: Task, history?: { start: number; limit: number 
 }
 
 export function widgetLines(state: ProjectState, activity: string, operation?: ActiveOperation): string[] {
-  const reviews = state.tasks.filter(task => task.status === "needs_review").length;
+  const managed = new Set(state.teamMode?.requests.flatMap(request => request.taskIds) ?? []);
+  const reviews = state.tasks.filter(task => !managed.has(task.id) && task.status === "needs_review").length + (state.teamMode?.requests.filter(request => request.status === "awaiting_user_acceptance" && state.tasks.find(t => t.id === request.taskIds[0])?.acceptanceSource !== "user").length ?? 0);
   const unconfirmed = state.tasks.some(task => task.status === "running" || task.attempts.some(attempt => !attempt.endedAt) || task.checks.some(check => check.status === "running")) || state.planningAttempts.some(attempt => !attempt.endedAt);
   const phase = operation?.phase === "stopping" ? "중단 요청 중" : operation?.kind === "check" ? "검증 중" : operation?.kind === "planning" ? "계획 생성 중" : operation ? (operation.phase === "preflight" ? "실행 준비 중" : operation.phase === "tool" ? "도구 실행 중" : operation.phase === "response" ? "응답 수신 중" : "응답 대기 중") : state.recoveryRequired ? "복구 확인 필요" : unconfirmed ? "실행 여부 확인 필요" : `실행 없음 · 결과 확인 ${reviews}개`;
   const planner = state.planningAttempts.at(-1);
