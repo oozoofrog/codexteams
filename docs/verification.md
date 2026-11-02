@@ -20,6 +20,8 @@ SDK 검증은 화면 label 선택과 실제 component의 `render`/`handleInput`�
 
 같은 Terminal/Pi 창 7016의 120×30 화면에 0.7.0을 reload했다. Home→새 요청→Esc는 기존 상태 바이트를 유지했다. 이어서 새 요청 editor에 읽기 전용 질문을 입력하고 모드 활성화를 확인했다. 실제 Astra high가 README를 읽고 `프로젝트 이름은 codexteams입니다.`라고 답했다. 조율 중과 답변 상태, 요청 선택→결과 보기→뒤로→Home을 관찰했다. 기존 개발 작업 11개·goal·profile과 사용자 수락 0개를 유지했다. 답변 뒤 읽기 전용 복귀도 상태 바이트를 바꾸지 않았다. OFF 전환과 reload 후 OFF·실행 없음의 기본 화면을 확인하고 그대로 두었다. 프로젝트 실행 설정 해시는 원본과 같다. `same-pi-result.png`, `same-pi-final-home.png`, `same-pi-final-summary.json`에 근거가 있다.
 
+최종 셸의 `codexteams --version`은 `command not found`였다. 전역 CLI 사용 가능 여부와 개인 Pi의 설치된 확장을 구분한다. 실제 설치 경로의 package version은 0.2.1이며 전역 CLI를 설치하거나 교체하지 않았다. 현재 Pi의 0.7.0은 프로젝트의 로컬 소스 선택으로 적용됐다.
+
 초기 미완료 결과, 실제 Sol 검토 2의 7개 결함과 검토 3의 추가 5개 결함은 모두 보존했다. 같은 Terra 작업에서 수정했고 최종 Sol 검토가 이를 확인했다. 첫 a5 외부 실행의 계약 scope와 임시 cache 분류 실패도 당시 FAIL로 보존했다. 이후 통과를 과거 실패에 소급하지 않는다. 전역 CLI 교체·인증 변경·개발 결과 자동 수락은 하지 않았다. VoiceOver, 장시간 실제 작업과 사용자의 최종 사용성 수락은 확인하지 않았다. 이번 Git 반영 범위는 `task/team-session-navigation`이며 main 병합은 포함하지 않는다.
 
 ## 0.6.0 Pi 자체 팀 모드 — 당시 검증·Pi 적용 완료
@@ -31,7 +33,7 @@ SDK 검증은 화면 label 선택과 실제 component의 `render`/`handleInput`�
 
 최종 120×30 기본 화면은 팀 모드 OFF·실행 없음·결과 확인 8개를 표시한다. 사용자 수락은 0개이며 실행 중인 worker/coordinator는 없다. 기본 화면 조회 전후 Teams 상태가 같았다. 같은 interactive Pi를 계속 사용했고 별도 테스트 창을 만들지 않았다. `live-home-off-final.png`와 `live-final-summary.json`에 결과가 있다. 실제 계정의 위 두 짧은 답변과 로컬 공급자 fixture의 전체 구현 파이프라인 증명은 서로 다른 검증이다. VoiceOver, 장시간 실제 작업과 최종 사용자 사용성 수락은 확인하지 않았다.
 
-출시 전 읽기 전용 지원 검토에서 README의 기본 화면/상태 명령 구분과 ON 자동 실행 설명 두 곳을 수정했다. 같은 Terra task-7의 문서 전용 13번째 시도가 README와 `.gitignore`만 변경하고 멈췄다. 실제 Sol task-8의 검토 5는 이 변경분을 PASS로 판정했다. `/.pi/settings.json`은 Git에서 제외해 로컬 절대 경로 설정을 보존한다. Root의 `release-delta-hash-check.json`은 a12의 93개 파일 중 README만 달라졌음을 확인했다. 실행 소스·테스트·패키지 metadata가 같아 기존 247개 테스트와 런타임 근거를 재사용한다. 최종 문서·패키지 내용·staging 검사는 commit 전에 수행한다. 사용자의 후속 지시로 현재 `task/team-session-navigation` 브랜치의 commit·push가 승인됐다. 전역 CLI는 0.2.1을 유지한다.
+출시 전 읽기 전용 지원 검토에서 README의 기본 화면/상태 명령 구분과 ON 자동 실행 설명 두 곳을 수정했다. 같은 Terra task-7의 문서 전용 13번째 시도가 README와 `.gitignore`만 변경하고 멈췄다. 실제 Sol task-8의 검토 5는 이 변경분을 PASS로 판정했다. `/.pi/settings.json`은 Git에서 제외해 로컬 절대 경로 설정을 보존한다. Root의 `release-delta-hash-check.json`은 a12의 93개 파일 중 README만 달라졌음을 확인했다. 실행 소스·테스트·패키지 metadata가 같아 기존 247개 테스트와 런타임 근거를 재사용한다. 최종 문서·패키지 내용·staging 검사는 commit 전에 수행한다. 사용자의 후속 지시로 현재 `task/team-session-navigation` 브랜치의 commit·push가 승인됐다. 개인 Pi에 설치된 전역 확장은 0.2.1을 유지한다.
 
 Sol 검토 3은 stdin 전달 후 실제 Pi가 내보내는 전체 사용자 echo가 기존 8 MiB JSONL 상한을 넘는 경로를 확인했다. 같은 Terra 작업에서 실제 제출한 prompt와 정확히 같은 사용자 echo만 JSON-escaped prompt 크기와 추가 8 MiB 범위로 허용했다. 일반 record 상한과 assistant 보존 범위는 유지한다. Pi-compatible 전체 message_start/message_end/agent_end, 선행 system message, 잘못된 UTF-8/JSON·위조 echo·잘린 record를 회귀로 검사했다.
 

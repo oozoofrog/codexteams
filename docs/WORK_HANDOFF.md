@@ -6,7 +6,9 @@
 
 실제 Astra 설계, GPT 6.1 Terra 단독 구현과 GPT 6.1 Sol 독립 검토를 완료했다. 전체 277개 테스트·typecheck·loader·pack이 통과했고 최종 Sol 소스 검토는 PASS다. 고정 소스의 실제 SDK/scripted TUI 통합 흐름, 자연어 중간 변경의 실제 Pi RPC와 프로세스 종료, Node 22.19 설치본 receipt parity도 통과했다. SDK의 수락은 격리된 synthetic fixture 확인이며 실제 개발 결과 수락은 하지 않았다.
 
-같은 Pi 창 7016에 0.7.0을 적용했다. 120×30에서 새 요청 editor 취소, 실제 Astra의 읽기 전용 답변, 결과와 뒤로 이동을 확인했다. 기존 개발 작업 11개·목표·프로필을 유지했다. 현재 기본 화면은 팀 모드 OFF·실행 없음이며 사용자 수락은 0개다. 새 요청을 시작하면 일반 입력의 팀 접수도 켜는지 확인한다. 프로젝트 실행 설정은 원본과 같고 전역 CLI는 0.2.1을 유지한다.
+같은 Pi 창 7016에 0.7.0을 적용했다. 120×30에서 새 요청 editor 취소, 실제 Astra의 읽기 전용 답변, 결과와 뒤로 이동을 확인했다. 기존 개발 작업 11개·목표·프로필을 유지했다. 현재 기본 화면은 팀 모드 OFF·실행 없음이며 사용자 수락은 0개다. 새 요청을 시작하면 일반 입력의 팀 접수도 켜는지 확인한다. 프로젝트 실행 설정은 원본과 같고 개인 Pi에 설치된 전역 확장은 0.2.1을 유지한다.
+
+최종 셸 확인에서 `codexteams --version`은 `command not found`였다. 현재 실행 환경의 PATH에서는 CLI 설치를 확인하지 못했다. 설치된 0.2.1은 `~/.pi/agent/git/github.com/oozoofrog/codexteams`의 Pi 확장이다. 기존 Pi의 `/teams`는 프로젝트 설정으로 이 작업트리의 0.7.0을 사용한다. CLI가 필요하면 README의 설치 절차를 별도로 적용한다.
 
 이번 게시 범위는 현재 작업 브랜치의 commit·push다. main 병합과 전역 설치는 포함하지 않는다. `.pi/settings.json`, `.codexteams`와 외부 증거·인증 파일은 Git에 넣지 않는다. 실패 이력과 검증 한계는 `docs/verification.md`의 0.7.0 절에 있다. VoiceOver와 장시간 사용성 수락은 별도다. 아래 설치 기록은 이전 전달 시점의 기록이다.
 
