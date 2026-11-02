@@ -1,4 +1,5 @@
 node_modules/
+/.pi/settings.json
 .codexteams/
 coverage/
 *.tgz

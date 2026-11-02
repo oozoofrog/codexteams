@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, writeSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { createHash } from "node:crypto";
 
 const mode = process.argv[2];
 const args = process.argv.slice(3);
@@ -38,8 +39,32 @@ if (mode === "child") {
   const systemValue = args[args.indexOf("--append-system-prompt") + 1];
   let systemPrompt = systemValue;
   try { systemPrompt = readFileSync(systemValue, "utf8"); } catch {}
-  end({ content: [{ type: "text", text: JSON.stringify({ cwd: process.cwd(), args, systemPrompt, worker: process.env.CODEXTEAMS_WORKER }) }] });
+  const prompt = readFileSync(0, "utf8");
+  end({ content: [{ type: "text", text: JSON.stringify({ cwd: process.cwd(), args, systemPrompt, prompt, worker: process.env.CODEXTEAMS_WORKER }) }] });
   settle();
+} else if (mode === "prompt-digest") {
+  const prompt = readFileSync(0);
+  end({ content: [{ type: "text", text: JSON.stringify({ bytes: prompt.length, digest: createHash("sha256").update(prompt).digest("hex"), args }) }] });
+  settle();
+} else if (mode === "echo-prompt") {
+  const prompt = readFileSync(0, "utf8").trim();
+  const message = { role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() };
+  emit({ type: "message_start", message });
+  emit({ type: "message_end", message });
+  end();
+  emit({ type: "agent_end", messages: [{ role: "system", content: "", timestamp: Date.now() }, message, assistant()] });
+  settle();
+} else if (mode === "large-nonuser") {
+  emit({ type: "message_end", message: assistant({ content: [{ type: "text", text: "x".repeat(9 * 1024 * 1024) }] }) });
+} else if (mode === "large-forged-user") {
+  emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "x".repeat(9 * 1024 * 1024) }], timestamp: Date.now() } });
+} else if (mode === "large-wrong-user") {
+  const prompt = readFileSync(0, "utf8").trim();
+  emit({ type: "message_end", message: { role: "user", content: [{ type: "text", text: prompt + "tampered" }], timestamp: Date.now() } });
+} else if (mode === "large-truncated-user" || mode === "large-malformed-user") {
+  const prompt = readFileSync(0, "utf8").trim();
+  const line = JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() } });
+  stdout(mode === "large-truncated-user" ? line : line.slice(0, -1) + "]\n");
 } else if (mode === "success") {
   emit({ type: "session", version: 3, id: "fixture-session", cwd: process.cwd() });
   emit({ type: "message_start", message: assistant({ content: [], stopReason: "pending" }) });

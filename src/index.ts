@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { TeamController } from "./core/controller.ts";
+import { TeamModeSupervisor } from "./core/team-mode.ts";
 import { ProjectStore } from "./core/store.ts";
 import { cleanupOwners, processRegistry, type ProcessOwner } from "./core/process-registry.ts";
 import { checkedHeader, checkedView, ensureView, VIEW_MARKER } from "./core/navigation.ts";
@@ -14,11 +15,14 @@ import { readPublicTranscript } from "./ui/session-transcript.ts";
 import { handoffResult, readRequest, requestDigest } from "./core/handoff.mjs";
 import { parseProfile, parseRole } from "./core/profiles.ts";
 import { runPiWorker } from "./runtime/pi-runner.ts";
-import { formatAttemptHistory, formatBoard, formatTask, resumeCandidates, widgetLines } from "./ui/format.ts";
+import { formatAttemptHistory, formatBoard, formatTask, resumeCandidates, widgetLines, safeDisplay } from "./ui/format.ts";
+import { HomePanelError, homeActions, homeOverview, homePanel, homeResultLines } from "./ui/home.ts";
 import type { ModelProfile, TaskRole } from "./core/types.ts";
 
 const HELP = `## codexteams
 
+\`/teams mode on|off|status\` — 팀 모드 설정과 요청 상태
+\`/teams request resume|stop <id>\` — 팀 요청 재개 또는 중단
 \`/teams handoff <JSON 경로>\` — 인계 작업 실행
 \`/teams handoff-result <id>\` — 인계 결과 조회
 \`/teams launch <목표>\` — 새 프로젝트 계획을 만들고 준비된 작업 실행
@@ -64,6 +68,7 @@ export default function codexteams(pi: ExtensionAPI): void {
   let generation = 0;
   let viewTimer: ReturnType<typeof setTimeout> | undefined;
   let closeView: (() => void) | undefined;
+  let closeHome: (() => void) | undefined;
   let activeViewFile: string | undefined;
   let activeViewContext: ExtensionContext | undefined;
 
@@ -74,8 +79,9 @@ export default function codexteams(pi: ExtensionAPI): void {
   const showWidget = () => {
     if (!context?.hasUI || !controller) return;
     const state = controller.snapshot();
-    context.ui.setStatus("codexteams", `teams ${state.tasks.filter(t => t.status === "completed").length}/${state.tasks.length}${controller.busy ? " · 실행 중" : ""}`);
-    context.ui.setWidget("codexteams", widgetLines(state, controller.currentActivity));
+    const lines = widgetLines(state, controller.currentActivity, controller.activeOperation);
+    context.ui.setStatus("codexteams", lines[0]);
+    context.ui.setWidget("codexteams", lines);
   };
 
   function attach(ctx: ExtensionContext): void {
@@ -100,9 +106,10 @@ export default function codexteams(pi: ExtensionAPI): void {
     if (!found) {
       const created = {} as ProcessOwner;
       created.registry = ctx.modelRegistry;
-      created.controller = new TeamController(ProjectStore.open(root), { runner: runPiWorker, validateProfile: profile => validateProfileWithRegistry(profile, created.registry), onChange: () => created.binding?.changed() });
+      created.controller = new TeamController(ProjectStore.open(root), { runner: runPiWorker, validateProfile: profile => validateProfileWithRegistry(profile, created.registry), onChange: () => { try { created.binding?.changed(); } finally { created.supervisor?.wake(); } } });
       registry.owners.set(root, created); found = created;
     }
+    found.supervisor ??= new TeamModeSupervisor(found.controller.store, { controller: found.controller, runner: runPiWorker, validateProfile: profile => validateProfileWithRegistry(profile, found!.registry), onChange: message => { const binding = found!.binding; binding?.changed(); if (message) binding?.message(message, "codexteams.mode"); } });
     attach(ctx);
     return found.controller;
   }
@@ -138,10 +145,12 @@ export default function codexteams(pi: ExtensionAPI): void {
   async function showView(ctx: ExtensionContext, source: { root: string; snapshot: () => ReturnType<TeamController["snapshot"]> }, item: CatalogItem): Promise<void> {
     if (ctx.mode !== "tui") { notify(ctx, "조회 화면은 Pi TUI에서 사용할 수 있습니다. /teams sessions", "warning"); return; }
     const root = source.root;
-    await ctx.ui.custom<void>((tui, _theme, keys, done) => {
-      let offset = 0, historyPage = 0;
+    let cleanup: (() => void) | undefined;
+    try { await ctx.ui.custom<void>((tui, _theme, keys, done) => {
+      let offset = 0, historyPage = 0, closed = false;
       const timer = setInterval(() => tui.requestRender(), 1000);
-      const close = () => done();
+      const close = () => { if (!closed) { cleanup?.(); done(); } };
+      cleanup = () => { if (!closed) { closed = true; clearInterval(timer); if (closeView === close) closeView = undefined; } };
       closeView = close;
       return {
         render(width: number) {
@@ -164,7 +173,7 @@ export default function codexteams(pi: ExtensionAPI): void {
           const attempt = attempts.at(-1), profile = attempt?.profile ?? (task ? state.profiles[task.role] : state.profiles.planner);
           const status = task?.status ?? attempt?.outcome ?? "진행 중";
           const page = Math.max(1, Math.floor(tui.terminal.rows * 0.6) - 5), max = Math.max(0, lines.length - page); offset = Math.min(offset, max);
-          return [`${item.kind === "task" ? "작업" : "계획"} ${item.id} · ${state.recoveryRequired ? "복구 필요 · " : ""}${status} · ${sessionStatus(root, attempt)} · ${task?.role ?? "planner"} · ${profile.provider}/${profile.model} / ${profile.effort}`, `팀 ${state.id}`, `경로: ${root}`, `실제 ${attempt?.effectiveModels.join(", ") || "확인 대기"} · 원본 worker 읽기 전용 · 복귀: /teams home · Esc`, ...lines.slice(offset, offset + page), `줄 ${offset + 1}–${Math.min(offset + page, lines.length)} / ${lines.length} · ↑/↓ 이동 · PgUp/PgDn 이력 ${historyPage + 1}/${Math.max(1, Math.ceil(attempts.length / 20))}`].map(line => truncateToWidth(line, width));
+          return [`${item.kind === "task" ? "작업" : "계획"} ${item.id} · ${state.recoveryRequired ? "복구 필요 · " : ""}${status} · ${sessionStatus(root, attempt)} · ${task?.role ?? "planner"} · ${profile.provider}/${profile.model} / ${profile.effort}`, `팀 ${state.id}`, `경로: ${root}`, `실제 ${attempt?.effectiveModels.join(", ") || "확인 대기"} · 원본 worker 읽기 전용 · 복귀: /teams home · Esc`, ...lines.slice(offset, offset + page), `줄 ${offset + 1}–${Math.min(offset + page, lines.length)} / ${lines.length} · ↑/↓ 이동 · PgUp/PgDn 이력 ${historyPage + 1}/${Math.max(1, Math.ceil(attempts.length / 20))}`].map(line => truncateToWidth(safeDisplay(line), width));
         },
         handleInput(data: string) {
           if (keys.matches(data, "tui.select.cancel")) { done(); return; }
@@ -175,9 +184,10 @@ export default function codexteams(pi: ExtensionAPI): void {
           tui.requestRender();
         },
         invalidate() {},
-        dispose() { clearInterval(timer); if (closeView === close) closeView = undefined; },
+        dispose() { cleanup?.(); },
       };
-    }, { overlay: true, overlayOptions: { width: "90%", maxHeight: "60%" } });
+    }, { overlay: true, overlayOptions: { width: "90%", maxHeight: "60%" } }); }
+    finally { cleanup?.(); }
   }
 
   async function openItem(ctx: ExtensionCommandContext, selected: ProcessOwner, item: CatalogItem): Promise<void> {
@@ -192,6 +202,147 @@ export default function codexteams(pi: ExtensionAPI): void {
     checkedHeader(navigation.root.file, root, navigation.root.id);
     checkedView(view, root, projectId);
     await ctx.switchSession(view.file, { withSession: async () => {} });
+  }
+
+  async function homeLoop(ctx: ExtensionCommandContext): Promise<void> {
+    const epoch = generation, root = realpathSync(ctx.cwd);
+    let error = "", selectedId: string | undefined, panel: "home" | "actions" | "result" = "home";
+    let baselineOwner = registry.owners.get(root);
+    const current = () => registry.owners.get(root)?.controller.snapshot() ?? ProjectStore.read(root);
+    const currentTeam = () => registry.owners.get(root)?.controller;
+    const register = (close?: () => void) => { closeHome = close; };
+    const guard = (before: ReturnType<typeof current>, id?: string, opId?: string) => {
+      if (epoch !== generation || !context || realpathSync(context.cwd) !== root || realpathSync(ctx.cwd) !== root || !ctx.isProjectTrusted()) throw new Error("프로젝트 또는 세션이 변경되었습니다. 다시 선택하세요.");
+      if (registry.owners.get(root) !== baselineOwner) throw new Error("팀 소유자가 변경되었습니다. 다시 선택하세요.");
+      const now = current(), active = currentTeam();
+      if ((before?.id ?? null) !== (now?.id ?? null) || Boolean(before?.recoveryRequired) !== Boolean(now?.recoveryRequired)) throw new Error("팀 또는 복구 상태가 변경되었습니다. 다시 선택하세요.");
+      if (active) { if (registry.owners.get(root)?.controller !== active) throw new Error("팀 소유자가 변경되었습니다."); active.store.assertOwner(); }
+      if (id) {
+        const old = before?.tasks.find(t => t.id === id), task = now?.tasks.find(t => t.id === id);
+        if (!old || !task || old.status !== task.status || old.updatedAt !== task.updatedAt || old.attempts.at(-1)?.id !== task.attempts.at(-1)?.id || JSON.stringify(old.checks.map(c => [c.id, c.status, c.attemptId])) !== JSON.stringify(task.checks.map(c => [c.id, c.status, c.attemptId]))) throw new Error("작업 또는 결과가 변경되었습니다. 다시 선택하세요.");
+      }
+      if (opId !== undefined && active?.activeOperation?.id !== opId) throw new Error("실행이 변경되었습니다. 다시 선택하세요.");
+      return now;
+    };
+    const mutateTeam = async (before: ReturnType<typeof current>, id?: string, addition = false) => {
+      guard(before, id);
+      const prior = currentTeam();
+      const team = await getController(ctx);
+      if (prior && prior !== team) throw new Error("팀 소유자가 변경되었습니다.");
+      baselineOwner = registry.owners.get(root);
+      guard(before ?? team.snapshot(), id);
+      if (team.busy && !addition) throw new Error("실행 또는 검증이 진행 중입니다.");
+      if (team.snapshot().recoveryRequired) throw new Error(team.snapshot().recoveryReason || "복구 확인이 필요합니다.");
+      return team;
+    };
+    const startWork = (team: TeamController, work: Promise<unknown>) => {
+      error = "";
+      void work.catch(e => { if (epoch === generation && registry.owners.get(root)?.controller === team) { error = e instanceof Error ? e.message : String(e); try { showWidget(); } catch {} } });
+    };
+    const progress = async (before: ReturnType<typeof current>, op: NonNullable<TeamController["activeOperation"]>, stopImmediately = false) => {
+      const action = stopImmediately ? "stop" : await homePanel(ctx, () => ({ title: "현재 진행", lines: [widgetLines(current()!, currentTeam()?.currentActivity ?? "", currentTeam()?.activeOperation)[0], `시작 ${op.startedAt}`, `마지막 관찰 ${currentTeam()?.activeOperation?.lastActivityAt ?? op.lastActivityAt}`], choices: [{ id: "back", label: "뒤로" }, { id: "stop", label: "중단 요청" }] }), register);
+      guard(before, undefined, op.id);
+      if (action === "stop") {
+        const ok = await ctx.ui.confirm("중단 요청", "현재 실행에 중단을 요청합니다. 종료가 확인될 때까지 기다립니다."); guard(before, undefined, op.id);
+        if (ok) void currentTeam()!.cancel().catch(e => { if (epoch === generation) error = String(e); });
+      }
+    };
+    while (epoch === generation) {
+      try {
+        baselineOwner = registry.owners.get(root);
+        const before = current(), team = currentTeam(), operationAtOpen = team?.activeOperation;
+        if (panel === "home") {
+          const choice = await homePanel(ctx, () => homeOverview(root, current(), currentTeam()?.activeOperation, currentTeam()?.currentActivity ?? "", error), register);
+          if (!choice || epoch !== generation) return;
+          guard(before);
+          if (choice.startsWith("task:")) { selectedId = choice.slice(5); if (!current()?.tasks.some(t => t.id === selectedId)) throw new Error("작업이 변경되었습니다."); panel = "actions"; continue; }
+          if (choice === "mode") {
+            if (!before?.teamMode?.enabled && !ctx.isIdle()) throw new Error("부모 Pi 실행이 끝난 뒤 팀 모드를 켜세요.");
+            await getController(ctx); baselineOwner = registry.owners.get(root);
+            await baselineOwner!.supervisor!.setMode(!before?.teamMode?.enabled);
+            return;
+          }
+          if (choice === "help") { await homePanel(ctx, () => ({ title: "상세 / 도움말", lines: (current() ? formatBoard(current()!, currentTeam()?.currentActivity) : HELP).split("\n"), choices: [{ id: "back", label: "뒤로" }] }), register); guard(before); continue; }
+          if (choice === "goal") {
+            const value = await ctx.ui.input("새 목표", "프로젝트 목표를 입력하세요"); guard(before);
+            if (!value?.trim()) continue;
+            const target = await mutateTeam(before);
+            startWork(target, target.start(value)); continue;
+          }
+          if (choice === "retry-plan") {
+            const ok = await ctx.ui.confirm("계획 다시 만들기", "저장된 기존 목표로 계획 생성을 다시 시도합니다."); guard(before);
+            if (!ok || !before?.goal) continue;
+            const target = await mutateTeam(before); startWork(target, target.start(before.goal)); continue;
+          }
+          if (choice === "add") {
+            const role = await ctx.ui.select("작업 역할", ["developer", "designer", "reviewer"]); guard(before);
+            if (!role) continue;
+            const value = await ctx.ui.editor("새 작업 내용", ""); guard(before);
+            if (!value?.trim()) continue;
+            const target = await mutateTeam(before, undefined, true);
+            target.add(parseRole(role) as TaskRole, value); error = ""; continue;
+          }
+          if (choice === "recovery-check") {
+            const ok = await ctx.ui.confirm("이전 실행 확인", "이전 실행의 소유권을 확인합니다. 남은 프로세스와 파일을 확인한 후 복구를 별도로 승인해야 합니다."); guard(before);
+            if (!ok) continue;
+            const target = await getController(ctx); baselineOwner = registry.owners.get(root);
+            const reconciled = target.snapshot();
+            if (reconciled.id !== before?.id) throw new Error("팀이 변경되었습니다. 다시 선택하세요.");
+            guard(reconciled);
+            continue;
+          }
+          if (choice === "recover") {
+            const ok = await ctx.ui.confirm("복구 확인", safeDisplay(before?.recoveryReason || "이전 프로세스 종료와 파일의 부분 변경을 확인했나요?")); guard(before);
+            if (!ok) continue;
+            const target = currentTeam() ?? await getController(ctx); baselineOwner = registry.owners.get(root); guard(before);
+            if (target.busy || !target.snapshot().recoveryRequired) throw new Error("복구 상태가 변경되었습니다.");
+            target.recover(true); error = ""; continue;
+          }
+          if (choice === "progress") {
+            const op = currentTeam()?.activeOperation; if (!op || op.id !== operationAtOpen?.id) throw new Error("실행이 변경되었습니다. 다시 선택하세요.");
+            await progress(before, op);
+            continue;
+          }
+          continue;
+        }
+        const task = before?.tasks.find(t => t.id === selectedId);
+        if (!task) { panel = "home"; continue; }
+        const id = task.id;
+        let choice: string | undefined;
+        if (panel === "actions") {
+          choice = await homePanel(ctx, () => ({ title: task.title, status: widgetLines(current()!, currentTeam()?.currentActivity ?? "", currentTeam()?.activeOperation)[0], choices: homeActions(current()!, currentTeam()?.activeOperation, id) }), register);
+          if (!choice) { panel = "home"; continue; }
+        } else {
+          const resultActions = homeActions(before!, team?.activeOperation, id).filter(a => ["revise", "accept", "retry", "details"].includes(a.id));
+          choice = await homePanel(ctx, () => ({ title: "결과 확인", lines: homeResultLines(current()?.tasks.find(t => t.id === id) ?? task), choices: [{ id: "back", label: "뒤로" }, ...resultActions] }), register);
+          if (!choice || choice === "back") { panel = "actions"; continue; }
+        }
+          guard(before, id);
+          const action = homeActions(current()!, currentTeam()?.activeOperation, id).find(a => a.id === choice);
+          if (!action) throw new Error("작업 행동이 변경되었습니다.");
+          if (choice === "result") { panel = "result"; continue; }
+          if (choice.startsWith("dependency:")) { selectedId = action.targetId; panel = "result"; continue; }
+          if (choice === "progress" || choice === "stop") { const op = currentTeam()?.activeOperation; if (!op || op.id !== operationAtOpen?.id || op.taskId !== id) throw new Error("실행이 변경되었습니다. 다시 선택하세요."); await progress(before, op, choice === "stop"); panel = "home"; continue; }
+          if (choice === "recover") { panel = "home"; continue; }
+          if (choice === "content" || choice === "details") {
+            await homePanel(ctx, () => ({ title: choice === "content" ? "작업 내용" : "작업 상세", lines: (choice === "content" ? task.description : formatTask(task)).split("\n"), choices: [{ id: "back", label: "뒤로" }] }), register); guard(before, id); continue;
+          }
+          if (choice === "run" || choice === "start-handoff" || choice === "retry") {
+            const target = await mutateTeam(before, id);
+            startWork(target, choice === "run" ? target.run(id) : target.resume(id)); panel = "home"; continue;
+          }
+          if (choice === "revise") {
+            const instruction = await ctx.ui.editor("수정 요청", ""); guard(before, id);
+            if (!instruction?.trim()) continue;
+            const target = await mutateTeam(before, id); startWork(target, target.resume(id, instruction)); panel = "home"; continue;
+          }
+          if (choice === "accept") {
+            const ok = await ctx.ui.confirm("결과 수락", `${safeDisplay(task.title)}\n최근 실행 ${task.attempts.at(-1)?.id ?? "없음"}을 사용자 검토 결과로 수락합니다. 테스트 통과와 별개입니다.`); guard(before, id);
+            if (!ok) continue;
+            const target = await mutateTeam(before, id); target.accept(id); panel = "home"; continue;
+          }
+      } catch (e) { if (epoch !== generation) return; error = e instanceof Error ? e.message : String(e); if (e instanceof HomePanelError) { notify(ctx, error, "error"); return; } panel = "home"; }
+    }
   }
 
   pi.registerCommand("teams", {
@@ -241,7 +392,7 @@ export default function codexteams(pi: ExtensionAPI): void {
                   const item = selected.item && state ? catalog(state, candidates.get(selected.root)?.controller.currentActivity).find(i => i.kind === selected.item!.kind && i.id === selected.item!.id) : undefined;
                   const count = Math.max(1, Math.floor(tui.terminal.rows * 0.6) - 6);
                   const start = Math.max(0, Math.min(selectedIndex - count + 1, entries.length - count));
-                  return ["팀 · 작업 세션", ...entries.slice(start, start + count).map((e, i) => `${start + i === selectedIndex ? "→ " : "  "}${row(e)}`), `팀 ${selected.projectId}`, `경로: ${sliceByColumn(selected.root, rootOffset, Math.max(1, width - 8))}`, item?.label ?? row(selected), `↑/↓ 이동 · Enter 선택 · Esc 취소 · ←/→ 경로 이동 (${selectedIndex + 1}/${entries.length})`].map(line => truncateToWidth(line, width));
+                  return ["팀 · 작업 세션", ...entries.slice(start, start + count).map((e, i) => `${start + i === selectedIndex ? "→ " : "  "}${row(e)}`), `팀 ${selected.projectId}`, `경로: ${sliceByColumn(selected.root, rootOffset, Math.max(1, width - 8))}`, item?.label ?? row(selected), `↑/↓ 이동 · Enter 선택 · Esc 취소 · ←/→ 경로 이동 (${selectedIndex + 1}/${entries.length})`].map(line => truncateToWidth(safeDisplay(line), width));
                 },
                 handleInput(data: string) {
                   if (keys.matches(data, "tui.select.cancel")) { done(undefined); return; }
@@ -291,9 +442,10 @@ export default function codexteams(pi: ExtensionAPI): void {
           }
           await openItem(ctx, selected, entry.item); return;
         }
+        if ((!action && !marker && ctx.mode === "tui") || (action === "home" && !marker && ctx.mode === "tui")) { await homeLoop(ctx); return; }
         if (action === "home") {
+          if (!marker) { const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd); display(state ? formatBoard(state, controller?.currentActivity) : HELP); return; }
           if (!ctx.sessionManager?.getSessionFile?.()) throw new Error("--no-session에서는 영속 팀 세션으로 이동하지 않습니다.");
-          if (!marker) { display("현재 팀 화면입니다."); return; }
           const selected = registry.owners.get(marker.root);
           if (!selected && realpathSync(ctx.cwd) !== marker.root) throw new Error("팀 연결을 찾을 수 없습니다.");
           const state = selected?.controller.snapshot() ?? ProjectStore.read(marker.root);
@@ -301,7 +453,34 @@ export default function codexteams(pi: ExtensionAPI): void {
           const navigation = state.navigation;
           if (!navigation) throw new Error("팀 root가 없습니다.");
           selected?.controller.store.assertOwner(); checkedHeader(navigation.root.file, marker.root, navigation.root.id);
-          await ctx.switchSession(navigation.root.file, { withSession: async fresh => { await fresh.sendMessage({ customType: "codexteams", content: "팀 화면으로 돌아왔습니다.", display: true }, { triggerTurn: false }); } }); return;
+          const pending = registry.pendingHome = { root: marker.root, file: navigation.root.file };
+          try { const result = await ctx.switchSession(navigation.root.file, { withSession: async () => {} }); if (result.cancelled && registry.pendingHome === pending) registry.pendingHome = undefined; }
+          catch (error) { if (registry.pendingHome === pending) registry.pendingHome = undefined; throw error; }
+          return;
+        }
+        if (action === "mode") {
+          const sub = rest.trim() || "status";
+          if (!["on", "off", "status"].includes(sub)) throw new Error("사용법: /teams mode on|off|status");
+          if (sub === "status") {
+            const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
+            const mode = state?.teamMode;
+            const latest = mode?.coordinatorAttempts.at(-1);
+            display([`팀 모드: ${mode?.enabled ? "ON" : "OFF"}`, ...(mode?.requests.slice(-20).map(r => `${r.id} · ${r.status}${r.reason ? ` · ${r.reason}` : ""}${r.amendments?.length ? ` · 변경 대기 ${r.amendments.filter(a => a.status === "pending").length} · 반영 ${r.amendments.filter(a => a.status === "applied").length}` : ""}${r.answer ? `\n${r.answer}` : ""}`) ?? []), ...(controller?.busy ? [`작업/검증 진행 중: ${controller.currentActivity}`] : []), ...(latest ? [`조율: ${latest.endedAt ? latest.outcome : "진행 중"} · 요청 ${latest.profile.provider}/${latest.profile.model} ${latest.profile.effort} · 반환 ${latest.effectiveModels.join(", ") || "미확인"} · 사용 토큰 ${latest.usage.totalTokens ?? "미확인"}`] : [])].join("\n"));
+            return;
+          }
+          if (sub === "on" && !ctx.isIdle()) throw new Error("부모 Pi 실행이 끝난 뒤 팀 모드를 켜세요.");
+          await getController(ctx);
+          await registry.owners.get(realpathSync(ctx.cwd))!.supervisor!.setMode(sub === "on");
+          notify(ctx, sub === "on" ? "팀 모드 ON · 일반 입력을 팀에 접수합니다." : "팀 모드 OFF · 이미 실행 중인 작업은 계속됩니다.");
+          return;
+        }
+        if (action === "request") {
+          const [verb, id] = splitArgument(rest);
+          if (!id || !["resume", "stop"].includes(verb)) throw new Error("사용법: /teams request resume|stop <id>");
+          await getController(ctx);
+          const supervisor = registry.owners.get(realpathSync(ctx.cwd))!.supervisor!;
+          if (verb === "resume") supervisor.resume(id.trim()); else await supervisor.stop(id.trim());
+          notify(ctx, verb === "resume" ? `요청 재개: ${id.trim()}` : `요청 중단: ${id.trim()}`); return;
         }
         if (action === "handoff-result") {
           const state = controller?.store.root === realpathSync(ctx.cwd) ? controller.snapshot() : ProjectStore.read(ctx.cwd);
@@ -440,12 +619,32 @@ export default function codexteams(pi: ExtensionAPI): void {
     },
   });
 
-  pi.on("input", async (_event, ctx) => {
+  pi.on("input", async (event, ctx) => {
     if (viewMarker(ctx) || isOriginalWorker(ctx)) { if (ctx.hasUI) ctx.ui.notify("읽기 전용 세션입니다. 팀 화면으로 돌아가세요.", "warning"); return { action: "handled" }; }
-    return { action: "continue" };
+    if (event.source === "extension") return { action: "continue" };
+    try {
+      const root = realpathSync(ctx.cwd), current = registry.owners.get(root);
+      const state = current?.controller.snapshot() ?? ProjectStore.read(root);
+      if (!state?.teamMode?.enabled) return { action: "continue" };
+      if (event.images?.length) { notify(ctx, "팀 모드는 이미지 첨부를 지원하지 않습니다. 텍스트만 다시 보내세요.", "warning"); return { action: "handled" }; }
+      await getController(ctx);
+      const requestId = registry.owners.get(root)!.supervisor!.ingest({ text: event.text, origin: event.source, sessionId: ctx.sessionManager.getSessionId(), ...(event.streamingBehavior ? { streamingIntent: event.streamingBehavior } : {}) });
+      notify(ctx, `팀 요청 접수: ${requestId}`);
+    } catch (error) { notify(ctx, `팀 요청을 접수하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    return { action: "handled" };
   });
-  pi.on("tool_call", async (_event, ctx) => (viewMarker(ctx) || isOriginalWorker(ctx)) ? { block: true, reason: "읽기 전용 조회입니다. /teams home" } : undefined);
-  pi.on("user_bash", async (_event, ctx) => (viewMarker(ctx) || isOriginalWorker(ctx)) ? { result: { output: "읽기 전용 조회입니다. /teams home", exitCode: 1, cancelled: false, truncated: false } } : undefined);
+  const parentWriteBlocked = (ctx: ExtensionContext): boolean => {
+    try {
+      const root = realpathSync(ctx.cwd), current = registry.owners.get(root);
+      return Boolean(current?.controller.busy || current?.controller.snapshot().teamMode?.enabled || (!current && ProjectStore.read(root)?.teamMode?.enabled));
+    } catch { return true; }
+  };
+  pi.on("tool_call", async (event, ctx) => {
+    if (viewMarker(ctx) || isOriginalWorker(ctx)) return { block: true, reason: "읽기 전용 조회입니다. /teams home" };
+    if (parentWriteBlocked(ctx) && !["read", "grep", "find", "ls", "codexteams_status"].includes(event.toolName)) return { block: true, reason: "팀 모드 또는 팀 실행 중에는 부모의 쓰기·명령 실행을 차단합니다." };
+    return undefined;
+  });
+  pi.on("user_bash", async (_event, ctx) => (viewMarker(ctx) || isOriginalWorker(ctx) || parentWriteBlocked(ctx)) ? { result: { output: "팀 모드 또는 팀 실행 중에는 명령을 실행할 수 없습니다.", exitCode: 1, cancelled: false, truncated: false } } : undefined);
   pi.on("session_before_switch", async (event, ctx) => {
     const target = event.targetSessionFile;
     if (!target) return;
@@ -473,7 +672,7 @@ export default function codexteams(pi: ExtensionAPI): void {
     const args = separator < 0 ? process.argv : process.argv.slice(0, separator);
     const extensionPaths = args.flatMap((arg, i) => (arg === "-e" || arg === "--extension") && args[i + 1] ? [args[i + 1]] : []);
     const managed = args.includes("--no-extensions") && extensionPaths.length === 1 && extensionPaths[0] === explicit;
-    if (!managed && destination !== realpathSync(ctx.cwd) && [...registry.owners.values()].some(o => o.controller.busy)) {
+    if (!managed && destination !== realpathSync(ctx.cwd) && [...registry.owners.values()].some(o => o.controller.busy || o.supervisor?.busy)) {
       notify(ctx, "실행 중인 팀은 다른 프로젝트로 이동할 수 없습니다. codexteams launcher를 사용하세요.", "warning"); return { cancel: true };
     }
     if (!managed && destination !== realpathSync(ctx.cwd)) await cleanupOwners(registry);
@@ -484,11 +683,20 @@ export default function codexteams(pi: ExtensionAPI): void {
     generation++;
     if (viewTimer) clearTimeout(viewTimer);
     viewTimer = undefined;
+    const previousHome = closeHome; closeHome = undefined; previousHome?.();
     const previousView = closeView; closeView = undefined; previousView?.();
     activeViewFile = undefined; activeViewContext = undefined;
     attach(ctx);
-    if (ctx.mode !== "tui" || !ctx.isProjectTrusted()) return;
+    if (ctx.mode !== "tui" || !ctx.isProjectTrusted()) { registry.pendingHome = undefined; return; }
     const marker = viewMarker(ctx);
+    const pendingHome = registry.pendingHome;
+    if (pendingHome && !marker && file === pendingHome.file && realpathSync(ctx.cwd) === pendingHome.root) {
+      registry.pendingHome = undefined;
+      const epoch = generation;
+      viewTimer = setTimeout(() => { viewTimer = undefined; if (generation === epoch) pi.sendUserMessage("/teams home", { expandPromptTemplates: true }); }, 0);
+      return;
+    }
+    if (pendingHome) registry.pendingHome = undefined;
     if (!marker || !file) return;
     const epoch = generation;
     try {
@@ -525,10 +733,11 @@ export default function codexteams(pi: ExtensionAPI): void {
     generation++;
     if (viewTimer) clearTimeout(viewTimer);
     viewTimer = undefined; activeViewFile = undefined; activeViewContext = undefined;
+    const home = closeHome; closeHome = undefined; home?.();
     const close = closeView; closeView = undefined; close?.();
     if (owner?.binding?.token === token) owner.binding = undefined;
     if (context?.hasUI) { try { context.ui.setWidget("codexteams", undefined); context.ui.setStatus("codexteams", undefined); } catch {} }
     context = undefined; controller = undefined; owner = undefined;
-    if (!["new", "resume", "fork"].includes(event.reason)) await cleanupOwners(registry);
+    if (!["new", "resume", "fork"].includes(event.reason)) { registry.pendingHome = undefined; await cleanupOwners(registry); }
   });
 }

@@ -1,5 +1,67 @@
 # codexteams 검증 기록
 
+## 0.6.0 Pi 자체 팀 모드 — 검증·현재 Pi 적용 완료
+
+현재 실제 Terra task-7의 12번째 시도가 작성을 마쳤다. Node 26.12.1에서 typecheck와 전체 247개 테스트가 통과했다. 실패·취소·skip은 0개다. focused 56개, loader와 package dry-run도 통과했다. 소스는 외부 `codexteams-team-mode-060/product-freeze-a12-manifest.json`의 93개 파일 해시로 고정했다. 실제 Sol task-8의 검토 4는 PASS이며 필요한 구현 수정은 남아 있지 않다. 같은 Pi/Terminal 창 7016에 원래 프로젝트 실행 설정을 바이트 단위로 복원하고 0.6.0을 reload했다.
+
+
+같은 Pi의 ON 상태에서 일반 텍스트 질문 하나를 보냈고 실제 `openai/gpt-6-astra` high가 답했다. 외부에서 run/resume을 호출하지 않았다. 요청의 origin은 `interactive`, 상태는 `answered`이며 작업 ID는 비어 있다. 질문 전후 기존 작업 8개의 구조와 기존 목표가 같았다. ON은 reload 후에도 유지됐다. 이후 OFF 전환과 reload를 확인했고 일반 텍스트는 기존 부모의 `openai/gpt-6.1-sol`이 직접 답했다. 이 OFF 입력은 coordinator attempt를 추가하지 않았으며 Teams 상태도 바꾸지 않았다. `live-on-comparison.json`, `live-astra-receipt.json`, `live-off-native-receipt.json`에 근거가 있다.
+
+최종 120×30 기본 화면은 팀 모드 OFF·실행 없음·결과 확인 8개를 표시한다. 사용자 수락은 0개이며 실행 중인 worker/coordinator는 없다. 기본 화면 조회 전후 Teams 상태가 같았다. 같은 interactive Pi를 계속 사용했고 별도 테스트 창을 만들지 않았다. `live-home-off-final.png`와 `live-final-summary.json`에 결과가 있다. 실제 계정의 위 두 짧은 답변과 로컬 공급자 fixture의 전체 구현 파이프라인 증명은 서로 다른 검증이다. VoiceOver, 장시간 실제 작업과 최종 사용자 사용성 수락은 확인하지 않았다.
+
+출시 전 읽기 전용 지원 검토에서 README의 기본 화면/상태 명령 구분과 ON 자동 실행 설명 두 곳을 수정했다. 같은 Terra task-7의 문서 전용 13번째 시도가 README와 `.gitignore`만 변경하고 멈췄다. 실제 Sol task-8의 검토 5는 이 변경분을 PASS로 판정했다. `/.pi/settings.json`은 Git에서 제외해 로컬 절대 경로 설정을 보존한다. Root의 `release-delta-hash-check.json`은 a12의 93개 파일 중 README만 달라졌음을 확인했다. 실행 소스·테스트·패키지 metadata가 같아 기존 247개 테스트와 런타임 근거를 재사용한다. 최종 문서·패키지 내용·staging 검사는 commit 전에 수행한다. 사용자의 후속 지시로 현재 `task/team-session-navigation` 브랜치의 commit·push가 승인됐다. 전역 CLI는 0.2.1을 유지한다.
+
+Sol 검토 3은 stdin 전달 후 실제 Pi가 내보내는 전체 사용자 echo가 기존 8 MiB JSONL 상한을 넘는 경로를 확인했다. 같은 Terra 작업에서 실제 제출한 prompt와 정확히 같은 사용자 echo만 JSON-escaped prompt 크기와 추가 8 MiB 범위로 허용했다. 일반 record 상한과 assistant 보존 범위는 유지한다. Pi-compatible 전체 message_start/message_end/agent_end, 선행 system message, 잘못된 UTF-8/JSON·위조 echo·잘린 record를 회귀로 검사했다.
+
+실제 Pi의 8 MiB 초과 경계는 `workcheck-runs-a12/echo-a12-01`에서 PASS다. 실제 `runPiWorker`→설치된 Pi JSON CLI→loopback 공급자가 9,437,216바이트 prompt 전체의 바이트 수·SHA-256·내용을 확인한 뒤 정상 응답을 반환했다. SDK session의 사용자 기록, 실제 worker PID 종료, 임시 prompt 디렉터리 정리와 소스 해시도 확인했다. 이 검증은 worker CLI transport 증명이며 아래 Teams/RPC 흐름과 구분한다. 실제 공급자 계정·인증은 사용하지 않았다.
+
+최종 a12의 Teams/RPC `single-a12-01`, `payload-a12-01`, `midwork-a12-01`도 모두 PASS다. 일반 입력 한 번의 실행→검토 FAIL→수정→PASS, check 출력 4개를 포함한 16 KiB 초과 실제 검토, 실제 worker/하위 process 중단 후 동일 작업/세션 재개를 확인했다. 실제 reviewer scope의 변경 지시·acceptance·check 결과·revision/digest가 연결됐다. 부모 poison 호출과 자동 수락은 없고 종료 후 프로세스·잠금이 정리됐다. `installed-node22-final-060-a12-result.json`은 큰 payload의 scope metadata를 별도 fixture에 복사한 Node 22 packaged JS parity와 훼손 거부 PASS다. 원본 RPC 데이터와 제품 파일 93개의 해시는 유지됐다.
+
+Sol 검토 2는 앞선 5개 수정과 기존 수동 큐의 종료 차단을 확인했다. 추가 P2는 reviewer payload가 사용자 수정 지시의 16 KiB 상한에 걸리는 경로였다. 같은 Terra 작업에서 별도 bounded reviewer API와 비공개 파일/stdin 전달을 추가했다. 사용자 수정 지시의 16 KiB 상한은 유지한다. 실제 subprocess로 최대 amendment scope·UTF-8 check tail·24 MiB를 넘는 JSON-escaped payload의 byte/digest 전달을 확인했다. 실패한 수정 전 회귀와 `sol-review2-fail.md`를 보존했다.
+
+새 파일/stdin transport의 `single-a11-01`, `payload-a11-01`, `midwork-a11-01`은 모두 PASS다. 큰 payload 검증은 서로 다른 check 4개의 각 4,000바이트 출력을 두 구현 attempt에서 확인했다. 실제 reviewer user prompt는 19,025바이트와 19,125바이트였으며 전체 scope·check output·truncation flag·request revision·scope/artifact digest가 연결됐다. native write/read, 검토 FAIL→동일 작업 수정→PASS, 실제 중단 후 같은 세션 재개, 사용자 수락 대기와 종료 정리도 확인했다. 부모 poison 모델 호출과 자동 사용자 수락은 없었다.
+
+`installed-node22-final-060-a11-result.json`도 PASS다. 큰 payload RPC의 실제 scope evidence를 별도 fixture로 복사해 ProjectStore와 설치본 packaged JS reader의 구조 검증을 확인했다. 훼손한 scope digest와 mode generation은 거부했고 원본 RPC 데이터는 변경하지 않았다. Pi peer/실행 파일이나 installed TypeScript loader 없이 조회했다. 제품 93개 파일은 검증 전후 같았다. a11의 근거는 `workcheck-runs-a11`와 `final-logs-a11`에 있다. 아래 a10/a8 기록은 해당 당시 소스의 근거다.
+
+실제 Sol의 독립 검토 1은 FAIL이었다. 전체 owner의 종료 fence, stale PASS의 요청별 재검토, amendment를 포함한 실제 reviewer 입력/범위 연결, coordinator의 상태·사용량 표시에서 5개 수정 사항을 확인했다. 같은 Terra 작업에서 수정했고 Root가 추가로 확인한 기존 수동 큐의 내부 scheduling도 동기적으로 abort한다. 실제 Pi SDK로 두 프로젝트를 전환한 뒤 reload하는 회귀, 이전 PASS가 무효가 된 요청의 새 check/검토, scope/revision 연결을 추가했다. `sol-review1-fail.md`와 `terra-attempt10-final.md`에 원문이 있다. 아래 a8 기술 검증은 당시 소스의 근거이며 최종 수락을 뜻하지 않는다.
+
+새 scope를 사용하는 첫 a10 RPC 실행은 검증기의 canonical scope가 `outputTruncated`를 빠뜨려 실패했다. 제품은 reviewer 실패 후 요청을 pause했고 PASS를 만들지 않았다. 제품 소스를 유지하고 외부 adapter를 수정했다. 새 `single-a10-02`와 `midwork-a10-01`은 모두 PASS다. `workcheck-runs-a10`의 각 receipt와 원문을 보존했다. midwork reviewer는 실제 inbound scope의 amendment ID·지시에서 요구값을 읽고 native read 결과와 비교했다. 원래 요청·writer acceptance·선언된 check 결과·request revision·scope digest도 검증했다. 종료 후 worker/하위 PID/lock은 남지 않았고 부모 poison 호출과 자동 사용자 수락은 없었다.
+
+a10 당시 Node 22.19 설치본도 `installed-node22-final-060-a10-result.json`에서 PASS였다. 완료된 native RPC의 scope 근거를 원본과 분리한 fixture에 복사해 ProjectStore와 packaged JS reader의 구조 검증을 확인했다. scope digest를 훼손한 복사본은 거부했다. 원본 RPC 상태는 변경하지 않았다. Pi peer/실행 파일이나 installed TypeScript loader 없이 조회했고 실제 모델 호출은 없었다. 최종 source 파일 92개는 이 검증 전후 같았다.
+
+Node 22.19의 격리 설치 패키지는 Pi peer나 실행 파일 없이 조회했다. 없는 상태를 새로 만들지 않았고, SDK navigation과 ON-mode 요청 metadata가 포함된 상태를 읽었다. 잘못된 mode generation은 packaged JS 검증에서 거부했다. `installed-node22-final-060-a8-result.json`에 결과가 있다. 실제 공급자 호출은 없었다.
+
+일반 입력 한 번의 standalone RPC 검증은 `workcheck-runs-a8/single-a8-02/receipt.json`에서 PASS다. 설정 후 클라이언트는 일반 prompt를 한 번만 전송하고 상태 관찰과 종료만 수행했다. 실제 Pi worker의 native write/read로 첫 구현→검토 `changes_required`→동일 작업/세션 수정→검토 `pass`를 확인했다. 두 검토는 각각 실제 내용 digest와 해당 구현 attempt의 선언된 check에 연결됐다. 기존 수동 작업은 실행하지 않았고 `awaiting_user_acceptance`에서 멈췄다. 부모 poison 모델 호출은 0회이며 종료 후 worker와 잠금이 남지 않았다.
+
+첫 실행은 Pi의 사용자 text-block 배열을 검증기가 문자열로만 가정해 실패했다. 제품 소스를 유지하고 외부 검증기만 수정했으며 `single-a8-01/receipt.json`과 원문을 보존했다.
+
+입력 두 번의 별도 검증도 `workcheck-runs-a8/midwork-a8-01/receipt.json`에서 PASS다. 첫 native writer의 Bash `sleep 30`과 실제 하위 프로세스를 관찰한 뒤 두 번째 일반 입력으로 방향 변경을 요청했다. coordinator의 실제 `interrupt_then_resume` 제안으로 기존 worker가 `aborted`가 됐다. 새 writer 모델 요청 전에 이전 worker와 관찰한 모든 하위 PID가 사라졌고 동시에 살아 있는 writer는 한 개였다. 동일 작업/세션의 새 attempt에 실제 변경 지시가 들어갔으며 native write→선언된 check→별도 reviewer native read/PASS→사용자 수락 대기로 이어졌다. 기존 goal/수동 작업을 유지했고 종료 후 잠금과 프로세스도 정리됐다. 이 검증은 두 입력을 쓰며 위의 단일 입력 증명과 구분한다.
+
+위 fixture 모델 이름과 usage는 로컬 프로토콜 데이터이며 실제 모델 신원이나 판단력을 증명하지 않는다. 런타임 검증 중 고정한 제품 파일 89개는 바뀌지 않았다. 실제 계정의 판단력과 최종 사용자 수락은 별도다.
+
+## 0.5.0 팀 기본 화면 — 2026-11-02
+
+0.5.0 검증 당시 같은 Pi에 로컬 0.5.0을 적용하고 기본 화면을 열어뒀다. `/teams`와 root의 `/teams home`에서 작업을 선택하고 결과 확인·수정 요청·명시적 수락을 고른다. 실행과 검증은 실제 controller operation으로 표시한다. 새 작업 추가는 실행을 시작하지 않으며, 일괄 실행은 요청 시점의 작업 ID 집합만 실행한다.
+
+| 확인 | 결과 |
+|---|---|
+| 최종 typecheck·전체 suite | **210 통과, 실패 0, 건너뜀 0**. `codexteams-home-paint-check-attempt6-final.log` |
+| 실제 Pi loader·pack dry run | 통과. 최종 paint smoke/pack 로그 |
+| Node 22.19.0 설치 패키지 | 별도 prefix에서 통과. Pi peer/실행 파일 없이 결과 조회, 없는 상태 비생성, 로컬 fixture 중복 억제, SDK navigation 상태 조회 확인. `installed-node22-final-050-paint-result.json` |
+| 독립 검토 | 실제 Sol Review3 PASS 및 paint-delta PASS. 이전 두 FAIL 보존 |
+| 실제 같은 Pi 120×30 | 전체 폭 Home, 결과 줄바꿈·PageDown, Esc 복귀, 현재 선택·키 안내 확인 |
+| 조회의 비실행 | Home→작업→결과→스크롤→복귀 전후 상태 SHA-256 동일. `ui-final-navigation.json` |
+| 실제 controller check | 검증 중과 완료 후 실행 없음 표시를 관찰. **49 통과**, exit 0, 최신 Terra attempt에 연결. 모델 attempt 수·수락 수 불변 |
+
+근거 폴더: [/Users/oozoofrog/.codex/visualizations/2026/11/02/codexteams-usability-050](/Users/oozoofrog/.codex/visualizations/2026/11/02/codexteams-usability-050). 최종 소스·테스트 해시는 `product-final-paint-manifest.json`, 화면은 `home-ready.png`, `result-scrolled.png`, `check-running.png`에 있다. 원시 RED·중간 실패·최종 GREEN 로그는 `final-logs`에 보존했다.
+
+controller check에는 화면 관찰 시간을 확보하는 5초 대기 fixture를 사용한 뒤 실제 Home/controller 회귀를 실행했다. 경과 시간과 실행 상태는 해당 실제 check의 값이다. 실제 운영 작업의 진행률이나 ETA를 만든 것이 아니다.
+
+실제 Astra/테라/솔 모델 개발 기록과 자동 fixture를 구분했다. 설치 probe는 로컬 fixture만 사용했다. 새 UI에서 실제 공급자 응답 스트림 전체와 VoiceOver를 확인한 결과는 없다. 키보드·120×30 화면 확인은 사용자 사용성 수락을 대신하지 않는다. MacPilot의 긴 AX 값 입력 거부 후에는 전경·대상 창을 확인한 네이티브 키 입력과 단계별 화면 재조회로 검증했다. 처음 확인하지 못한 스크롤 결과를 성공으로 남기지 않고 별도 기록을 정정했다.
+
+전역 설치본은 0.2.1을 유지했다. 현재 Pi는 복원한 프로젝트 설정을 통해 이 작업트리의 0.5.0을 불러온 상태다. commit·push·공개 배포와 사용자 수락은 하지 않았다.
+
+
 ## 0.4.0 팀·작업 세션 탐색 — 2026-11-02
 
 구현 소스는 `/Users/oozoofrog/.codex/worktrees/teams-session-navigation/codexteams`다. 최종 제품·테스트 파일60개의 hash를 `terra6-code-sha256.json`에 고정했다. 이후 실제 화면 검증에서도60개 파일이 같았다. 독립 Sol 재검토3은 **PASS**이며 필수 코드 수정은 남지 않았다. 작업의 `needs_review`와 사용자 수락은 별개로 유지한다.

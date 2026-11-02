@@ -1,0 +1,50 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { ProjectStore } from "../src/core/store.ts";
+import { TeamController } from "../src/core/controller.ts";
+import { TeamModeSupervisor } from "../src/core/team-mode.ts";
+import { cleanupOwners } from "../src/core/process-registry.ts";
+import { emptyUsage } from "../src/core/usage.ts";
+import type { WorkerRequest, WorkerResult } from "../src/core/types.ts";
+
+test("all-root cleanup fences B legacy preflight while A drains", { timeout: 10000 }, async t => {
+  const a = realpathSync(mkdtempSync(join(tmpdir(), "codexteams-mode-clean-a-"))), b = realpathSync(mkdtempSync(join(tmpdir(), "codexteams-mode-clean-b-")));
+  let releaseA!: () => void, releasePreflight!: () => void, startA!: () => void, startPreflight!: () => void, bRuns = 0, validations = 0;
+  const startedA = new Promise<void>(r => { startA = r; }), startedPreflight = new Promise<void>(r => { startPreflight = r; });
+  const storeA = ProjectStore.open(a), storeB = ProjectStore.open(b);
+  const runnerA = async (request: WorkerRequest): Promise<WorkerResult> => { startA(); await new Promise<void>(r => { releaseA = r; }); return { outcome: "success", text: "done", exitCode: 0, usage: emptyUsage(), effectiveModels: [], sessionId: request.sessionId }; };
+  const runnerB = async (request: WorkerRequest): Promise<WorkerResult> => { bRuns++; return { outcome: "success", text: "done", exitCode: 0, usage: emptyUsage(), effectiveModels: [], sessionId: request.sessionId }; };
+  const aController = new TeamController(storeA, { runner: runnerA, validateProfile: async () => {} });
+  const bController = new TeamController(storeB, { runner: runnerB, validateProfile: async () => { if (++validations === 2) { startPreflight(); await new Promise<void>(r => { releasePreflight = r; }); } } });
+  aController.add("developer", "hold A"); bController.add("developer", "first"); bController.add("developer", "second");
+  const registry = { version: 1 as const, source: "fixture", owners: new Map([[a, { controller: aController, registry: {} as never }], [b, { controller: bController, registry: {} as never }]]) };
+  let aRun: Promise<unknown> | undefined, bRun: Promise<unknown> | undefined;
+  t.after(async () => { releasePreflight?.(); releaseA?.(); await Promise.allSettled([aRun, bRun]); await cleanupOwners(registry as never).catch(() => {}); rmSync(a, { recursive: true, force: true }); rmSync(b, { recursive: true, force: true }); });
+  aRun = aController.run().catch(() => {}); bRun = bController.run().catch(() => {});
+  await Promise.all([startedA, startedPreflight]); assert.equal(bRuns, 1);
+  const cleanup = cleanupOwners(registry as never); releasePreflight();
+  await bRun; assert.equal(bRuns, 1); assert.equal(bController.snapshot().tasks[1].attempts.length, 0);
+  releaseA(); await cleanup;
+});
+
+test("all-root cleanup fences B before held A drains", { timeout: 10000 }, async t => {
+  const a = realpathSync(mkdtempSync(join(tmpdir(), "codexteams-mode-clean-a-"))), b = realpathSync(mkdtempSync(join(tmpdir(), "codexteams-mode-clean-b-")));
+  t.after(() => { rmSync(a, { recursive: true, force: true }); rmSync(b, { recursive: true, force: true }); });
+  let resolveA!: (result: WorkerResult) => void, resolveB!: (result: WorkerResult) => void, requestA!: WorkerRequest, requestB!: WorkerRequest, startA!: () => void, startB!: () => void, dispatches = 0;
+  const startedA = new Promise<void>(r => { startA = r; }), startedB = new Promise<void>(r => { startB = r; });
+  const runner = (request: WorkerRequest) => { if (!request.systemPrompt.includes("read-only team coordinator")) { dispatches++; throw Error("unexpected dispatch"); } return new Promise<WorkerResult>(resolve => { if (request.cwd === a) { requestA = request; resolveA = resolve; startA(); } else { requestB = request; resolveB = resolve; startB(); } }); };
+  const owner = (root: string) => { const store = ProjectStore.open(root); const controller = new TeamController(store, { runner, validateProfile: async () => {} }); return { controller, supervisor: new TeamModeSupervisor(store, { controller, runner, validateProfile: async () => {} }), registry: {} as never, binding: {} as never }; };
+  const oa = owner(a), ob = owner(b); const registry = { version: 1 as const, source: "fixture", owners: new Map([[a, oa], [b, ob]]) };
+  const result = (request: WorkerRequest, text: string): WorkerResult => ({ outcome: "success", text, exitCode: 0, usage: emptyUsage(), effectiveModels: [], sessionId: request.sessionId });
+  t.after(async () => { if (requestA) resolveA(result(requestA, "")); if (requestB) resolveB(result(requestB, "")); await cleanupOwners(registry as never).catch(() => {}); });
+  await oa.supervisor.setMode(true); await ob.supervisor.setMode(true); oa.supervisor.ingest({ text: "a", origin: "rpc", sessionId: "s-a" }); ob.supervisor.ingest({ text: "b", origin: "rpc", sessionId: "s-b" }); await Promise.all([startedA, startedB]);
+  const stateB = ob.controller.snapshot(), attempt = stateB.teamMode!.coordinatorAttempts[0];
+  const cleanup = cleanupOwners(registry as never);
+  assert.equal(requestA.signal?.aborted, true); assert.equal(requestB.signal?.aborted, true); assert.equal(ob.binding, undefined);
+  resolveB(result(requestB, JSON.stringify({ requestId: attempt.requestId, revision: attempt.requestRevision, generation: attempt.generation, kind: "propose_plan", checks: [], tasks: [{ id: "work", title: "work", description: "work", role: "developer", dependsOn: [], acceptance: ["works"] }] })));
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(dispatches, 0); assert.equal(ob.controller.snapshot().tasks.length, 0);
+  resolveA(result(requestA, "")); await cleanup; assert.equal(registry.owners.size, 0);
+});

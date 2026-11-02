@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { createAgentSessionRuntime, createAgentSessionServices, createAgentSessionFromServices, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { processRegistry } from "../../src/core/process-registry.ts";
+import { TeamModeSupervisor } from "../../src/core/team-mode.ts";
+import { emptyUsage } from "../../src/core/usage.ts";
+import type { WorkerRequest, WorkerResult } from "../../src/core/types.ts";
+const temp = realpathSync(mkdtempSync(join(tmpdir(), "mode-sdk-reload-"))), a = join(temp, "a"), b = join(temp, "b"), agent = join(temp, "agent"), sessions = join(temp, "sessions");
+for (const path of [a, b, agent, sessions]) mkdirSync(path);
+const ext = resolve("src/index.ts");
+const parent = (root: string) => { const m = SessionManager.create(root, sessions); m.appendMessage({ role: "user", content: [{ type: "text", text: "SDK mode reload checkpoint" }], timestamp: Date.now() }); return m; };
+const manager = parent(a), other = parent(b).getSessionFile()!;
+const createRuntime = async ({ cwd, sessionManager, sessionStartEvent }: any) => { const services = await createAgentSessionServices({ cwd, agentDir: agent, settingsManager: SettingsManager.inMemory({}, { projectTrusted: true }), resourceLoaderOptions: { noExtensions: true, additionalExtensionPaths: [ext], noSkills: true, noPromptTemplates: true, noThemes: true } }); return { ...await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent }), services, diagnostics: services.diagnostics }; };
+const runtime = await createAgentSessionRuntime(createRuntime, { cwd: a, agentDir: agent, sessionManager: manager });
+const ui = { notify: () => {}, setStatus: () => {}, setWidget: () => {} };
+const bind = async () => { await runtime.session.bindExtensions({ mode: "rpc", uiContext: ui as never }); }; runtime.setRebindSession(bind); await bind();
+let reqA!: WorkerRequest, reqB!: WorkerRequest, releaseA!: (v: WorkerResult) => void, releaseB!: (v: WorkerResult) => void, startedA!: () => void, startedB!: () => void, childDispatches = 0;
+const aStarted = new Promise<void>(r => { startedA = r; }), bStarted = new Promise<void>(r => { startedB = r; });
+const runner = (request: WorkerRequest) => new Promise<WorkerResult>(resolve => { if (!request.systemPrompt.includes("read-only team coordinator")) { childDispatches++; throw Error("unexpected dispatch"); } if (request.cwd === a) { reqA = request; releaseA = resolve; startedA(); } else { reqB = request; releaseB = resolve; startedB(); } });
+const result = (request: WorkerRequest, text: string): WorkerResult => ({ outcome: "success", text, exitCode: 0, usage: emptyUsage(), effectiveModels: [], sessionId: request.sessionId });
+try {
+ await runtime.session.prompt("/teams add developer one"); await runtime.switchSession(other); await runtime.session.prompt("/teams add developer two"); await runtime.switchSession(manager.getSessionFile()!);
+ const registry = processRegistry(), oa = registry.owners.get(a)!, ob = registry.owners.get(b)!;
+ oa.supervisor = new TeamModeSupervisor(oa.controller.store, { controller: oa.controller, runner, validateProfile: async () => {} }); ob.supervisor = new TeamModeSupervisor(ob.controller.store, { controller: ob.controller, runner, validateProfile: async () => {} });
+ await oa.supervisor.setMode(true); await ob.supervisor.setMode(true); oa.supervisor.ingest({ text: "a", origin: "rpc", sessionId: "s-a" }); ob.supervisor.ingest({ text: "b", origin: "rpc", sessionId: "s-b" }); await Promise.all([aStarted, bStarted]);
+ const attempt = ob.controller.snapshot().teamMode!.coordinatorAttempts[0]; const reload = runtime.session.reload();
+ for (let i = 0; i < 200 && !reqA.signal?.aborted; i++) await new Promise(r => setTimeout(r, 10));
+ assert.equal(reqA.signal?.aborted, true); assert.equal(reqB.signal?.aborted, true); assert.equal(oa.binding, undefined); assert.equal(ob.binding, undefined);
+ releaseB(result(reqB, JSON.stringify({ requestId: attempt.requestId, revision: attempt.requestRevision, generation: attempt.generation, kind: "propose_plan", checks: [], tasks: [{ id: "work", title: "work", description: "work", role: "developer", dependsOn: [], acceptance: ["works"] }] })));
+ await new Promise(r => setImmediate(r)); assert.equal(childDispatches, 0); assert.equal(ob.controller.snapshot().tasks.length, 1);
+ releaseA(result(reqA, "")); await reload; assert.equal(registry.owners.size, 0);
+ console.log(JSON.stringify({ ok: true, roots: 2, childDispatches }));
+} finally { if (reqA) releaseA(result(reqA, "")); if (reqB) releaseB(result(reqB, "")); await runtime.dispose(); rmSync(temp, { recursive: true, force: true }); }

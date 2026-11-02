@@ -85,7 +85,7 @@ export class ProjectStore {
       noSymlink(file);
       if (existsSync(file)) store.state = loadState(file, canonical);
       else store.persist(fresh);
-      const unfinished = store.state.tasks.some(t => t.status === "running" || t.attempts.some(a => !a.endedAt) || t.checks.some(c => c.status === "running")) || store.state.planningAttempts.some(a => !a.endedAt);
+      const unfinished = store.state.tasks.some(t => t.status === "running" || t.attempts.some(a => !a.endedAt) || t.checks.some(c => c.status === "running")) || store.state.planningAttempts.some(a => !a.endedAt) || Boolean(store.state.teamMode?.coordinatorAttempts.some(a => !a.endedAt));
       if (unfinished) store.update(state => {
         state.recoveryRequired = true;
         state.recoveryReason = "이전 Pi 실행이 정상적으로 종료되지 않았습니다. 남은 프로세스와 파일 상태를 확인한 후 /teams recover를 실행하세요.";
@@ -95,6 +95,16 @@ export class ProjectStore {
           for (const check of task.checks) if (check.status === "running") { check.status = "interrupted"; check.recoveryPending = true; check.endedAt = timestamp; }
         }
         for (const attempt of state.planningAttempts) if (!attempt.endedAt) { attempt.endedAt = timestamp; attempt.outcome = "aborted"; attempt.recoveryPending = true; attempt.error = "계획 생성이 중단되었습니다."; if (attempt.usage.completeness === "known") attempt.usage.completeness = "partial"; }
+        for (const attempt of state.teamMode?.coordinatorAttempts ?? []) if (!attempt.endedAt) {
+          attempt.endedAt = timestamp; attempt.outcome = "aborted"; attempt.recoveryPending = true; attempt.error = "조율 실행이 중단되었습니다.";
+          if (attempt.usage.completeness === "known") attempt.usage.completeness = "partial";
+          const request = state.teamMode!.requests.find(r => r.id === attempt.requestId);
+          if (request && request.status === "classifying") { request.status = "paused"; request.reason = "이전 조율 실행의 복구 확인이 필요합니다."; }
+        }
+      });
+      // A persisted ON flag is not permission to replay requests after a process restart.
+      if (store.state.teamMode?.requests.some(r => ["received", "classifying", "queued", "running"].includes(r.status))) store.update(state => {
+        for (const request of state.teamMode!.requests) if (["received", "classifying", "queued", "running"].includes(request.status)) { request.status = "paused"; request.reason = "이전 요청은 명시적으로 재개해야 합니다."; }
       });
       return store;
     } catch (error) { store.close(); throw error; }

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,8 @@ const MAX_RECORD_BYTES = 8 * 1024 * 1024;
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const MAX_PROGRESS_BYTES = 64 * 1024;
+// Allows the maximum managed review scope (including JSON escaping) plus task context.
+const MAX_PROMPT_BYTES = 66 * 1024 * 1024;
 const MAX_EFFECTIVE_MODELS = 64;
 const CLEANUP_GRACE_MS = 400;
 const TRUNCATED = "[Earlier output truncated to bound retained memory.]\n";
@@ -52,6 +54,19 @@ function usageFromMessage(value: unknown, stopReason: string): UsageSummary {
   if (required.every((value) => value !== null)) summary.completeness = "known";
   else if ([...required, summary.reasoning].some((value) => value !== null)) summary.completeness = "partial";
   return summary;
+}
+
+// JSON escaping may expand each input byte; count in bounded chunks without
+// allocating a second prompt-sized escaped string.
+function jsonStringBytes(value: string): number {
+  let bytes = 2;
+  for (let start = 0; start < value.length;) {
+    let end = Math.min(start + 65536, value.length);
+    if (end < value.length && value.charCodeAt(end - 1) >= 0xd800 && value.charCodeAt(end - 1) <= 0xdbff && value.charCodeAt(end) >= 0xdc00 && value.charCodeAt(end) <= 0xdfff) end--;
+    bytes += Buffer.byteLength(JSON.stringify(value.slice(start, end))) - 2;
+    start = end;
+  }
+  return bytes;
 }
 
 function tail(value: string, maxBytes: number): string {
@@ -133,6 +148,7 @@ export async function runPiWorker(request: WorkerRequest): Promise<WorkerResult>
   if (request.signal?.aborted) return { ...initialResult(request), outcome: "aborted", error: "Worker cancelled before launch." };
   let promptDirectory: string | undefined;
   try {
+    if (Buffer.byteLength(request.prompt) > MAX_PROMPT_BYTES) throw new Error("Worker prompt exceeds the transport limit.");
     const invocation = request.invocation ?? resolvePiInvocation();
     // Pi accepts either literal text or a filename here. A private file avoids path/text ambiguity.
     promptDirectory = await mkdtemp(join(tmpdir(), "codexteams-worker-"));
@@ -145,8 +161,16 @@ export async function runPiWorker(request: WorkerRequest): Promise<WorkerResult>
         schemaVersion: 1, parentPid: process.pid, token: guard.token, detached: true,
       }), { mode: 0o600 });
     }
-    if (request.signal?.aborted) return { ...initialResult(request), outcome: "aborted", error: "Worker cancelled before launch." };
-    return await collectWorker(request, invocation, systemPromptFile, guard);
+    // Pi JSON mode trims redirected stdin before prepending it to the first prompt.
+    // Delimiters preserve the complete prompt, including leading/trailing whitespace.
+    // A private descriptor avoids argv/E2BIG and pipe backpressure for large scopes.
+    const promptFile = join(promptDirectory, "prompt.txt");
+    await writeFile(promptFile, `<codexteams-prompt>\n${request.prompt}\n</codexteams-prompt>`, { mode: 0o600 });
+    const input = await open(promptFile, "r");
+    try {
+      if (request.signal?.aborted) return { ...initialResult(request), outcome: "aborted", error: "Worker cancelled before launch." };
+      return await collectWorker(request, invocation, systemPromptFile, input.fd, guard);
+    } finally { await input.close(); }
   } catch (error) {
     return {
       ...initialResult(request), outcome: request.signal?.aborted ? "aborted" : "failed",
@@ -157,7 +181,7 @@ export async function runPiWorker(request: WorkerRequest): Promise<WorkerResult>
   }
 }
 
-function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, systemPromptFile: string, guard?: GuardActivation): Promise<WorkerResult> {
+function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, systemPromptFile: string, inputFd: number, guard?: GuardActivation): Promise<WorkerResult> {
   return new Promise((resolveResult) => {
     const args = [
       ...invocation.args, "--mode", "json", "-p", "--session-id", request.sessionId,
@@ -165,7 +189,7 @@ function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, sys
       "--thinking", request.profile.effort, "--tools", request.tools.join(","),
       "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-mcp",
       ...(guard ? ["-e", fileURLToPath(new URL("./worker-guard.ts", import.meta.url))] : []),
-      "--append-system-prompt", systemPromptFile, "--", request.prompt,
+      "--append-system-prompt", systemPromptFile,
     ];
     const env: NodeJS.ProcessEnv = { ...process.env, CODEXTEAMS_WORKER: "1" };
     delete env.CODEXTEAMS_WORKER_OWNER_FILE;
@@ -175,7 +199,7 @@ function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, sys
       env.CODEXTEAMS_WORKER_TOKEN = guard.token;
     }
     const child = spawn(invocation.command, args, {
-      cwd: request.cwd, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"],
+      cwd: request.cwd, shell: false, detached: process.platform !== "win32", stdio: [inputFd, "pipe", "pipe"],
       env, windowsHide: true,
     });
     const stdoutDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -184,7 +208,11 @@ function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, sys
     const progress = new RetainedText(MAX_TEXT_BYTES);
     const models = new Set<string>();
     let usage: UsageSummary | undefined;
-    let lineBuffer = "";
+    const expectedPrompt = `<codexteams-prompt>\n${request.prompt}\n</codexteams-prompt>`;
+    // Pi echoes the user prompt in message_start/end and in agent_end.messages.
+    // The additional allowance covers event metadata and non-user messages.
+    const maxEchoRecordBytes = jsonStringBytes(expectedPrompt) + MAX_RECORD_BYTES;
+    let lineParts: string[] = [], lineBytes = 0, linePrefix = "";
     let lineNumber = 0;
     let stdoutEnded = false;
     let failure: string | undefined;
@@ -245,14 +273,22 @@ function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, sys
 
     function failProtocol(message: string): void {
       failure ??= `Pi JSON protocol error at record ${lineNumber + 1}: ${message}`;
-      lineBuffer = "";
+      lineParts = []; lineBytes = 0; linePrefix = "";
       beginCleanup();
     }
 
     function readRecord(line: string): void {
-      if (Buffer.byteLength(line) > MAX_RECORD_BYTES) throw new Error("JSON record exceeds the retained-memory limit.");
+      const bytes = Buffer.byteLength(line);
       const event = object(JSON.parse(line));
       if (!event || typeof event.type !== "string") throw new Error("Expected a JSON event object with a type.");
+      if (bytes > MAX_RECORD_BYTES) {
+        const messages = event.type === "agent_end" && Array.isArray(event.messages) ? event.messages : [event.message];
+        const userMessages = messages.map(object).filter(message => message?.role === "user");
+        const user = userMessages[0];
+        const content = user && Array.isArray(user.content) ? user.content : [];
+        const text = content.length === 1 ? object(content[0]) : undefined;
+        if (!(["message_start", "message_end", "agent_end"].includes(event.type)) || userMessages.length !== 1 || text?.type !== "text" || text.text !== expectedPrompt || bytes > maxEchoRecordBytes) throw new Error("JSON record exceeds the retained-memory limit.");
+      }
       if (event.type === "message_start") {
         if (object(event.message)?.role === "assistant") assistantPending = true;
       } else if (event.type === "message_update") {
@@ -304,19 +340,28 @@ function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, sys
       }
     }
 
+    function appendLine(part: string): void {
+      if (!part) return;
+      lineBytes += Buffer.byteLength(part); lineParts.push(part);
+      if (linePrefix.length < 256) linePrefix = (linePrefix + part).slice(0, 256);
+      if (lineBytes > MAX_RECORD_BYTES && (lineBytes > maxEchoRecordBytes || !/^\{"type":"(?:message_start|message_end)","message":\{"role":"user","content":\[\{"type":"text","text":"|^\{"type":"agent_end","messages":\[/.test(linePrefix))) throw new Error("JSON record exceeds the retained-memory limit.");
+    }
+
     function readStdout(chunk: Uint8Array): void {
       if (failure) return;
       try {
-        lineBuffer += stdoutDecoder.decode(chunk, { stream: true });
-        let newline: number;
-        while ((newline = lineBuffer.indexOf("\n")) !== -1) {
-          const line = lineBuffer.slice(0, newline).replace(/\r$/, "");
-          lineBuffer = lineBuffer.slice(newline + 1);
+        const decoded = stdoutDecoder.decode(chunk, { stream: true });
+        let start = 0, newline: number;
+        while ((newline = decoded.indexOf("\n", start)) !== -1) {
+          appendLine(decoded.slice(start, newline));
+          const line = lineParts.join("").replace(/\r$/, "");
+          lineParts = []; lineBytes = 0; linePrefix = "";
           readRecord(line);
           lineNumber++;
-          if (failure) { lineBuffer = ""; return; }
+          if (failure) return;
+          start = newline + 1;
         }
-        if (Buffer.byteLength(lineBuffer) > MAX_RECORD_BYTES) throw new Error("JSON record exceeds the retained-memory limit.");
+        appendLine(decoded.slice(start));
       } catch (error) {
         // Parse errors deliberately omit the raw record; it may contain private thinking.
         const message = error instanceof SyntaxError ? "Malformed JSON record." : error instanceof TypeError
@@ -329,9 +374,9 @@ function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, sys
       if (stdoutEnded) return;
       stdoutEnded = true;
       if (failure) return;
-      try { lineBuffer += stdoutDecoder.decode(); }
+      try { appendLine(stdoutDecoder.decode()); }
       catch { failProtocol("Truncated or invalid UTF-8 encoding."); return; }
-      if (lineBuffer.length > 0) failProtocol("Truncated JSONL record: final newline is missing.");
+      if (lineBytes > 0) failProtocol("Truncated JSONL record: final newline is missing.");
     }
 
     function finish(): void {
@@ -378,10 +423,10 @@ function collectWorker(request: WorkerRequest, invocation: WorkerInvocation, sys
       beginCleanup();
     }
 
-    child.stdout.on("data", readStdout);
-    child.stdout.once("end", endStdout);
-    child.stderr.on("data", (chunk: Uint8Array) => stderr.append(stderrDecoder.decode(chunk, { stream: true })));
-    child.stderr.once("end", () => stderr.append(stderrDecoder.decode()));
+    child.stdout!.on("data", readStdout);
+    child.stdout!.once("end", endStdout);
+    child.stderr!.on("data", (chunk: Uint8Array) => stderr.append(stderrDecoder.decode(chunk, { stream: true })));
+    child.stderr!.once("end", () => stderr.append(stderrDecoder.decode()));
     child.once("error", (error) => { failure ??= `Failed to launch Pi worker: ${error.message}`; beginCleanup(); });
     child.once("exit", () => {
       exited = true;

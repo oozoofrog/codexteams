@@ -184,7 +184,7 @@ async function main() {
     throw new Error('Pi version must be >=1.4.0 <2 (stable); selected executable failed the version check.');
   }
   const extension = fileURLToPath(new URL('../src/index.ts', import.meta.url));
-  const command = request ? `/teams handoff ${JSON.stringify(handoff)} ${requestDigest(request)}` : goal === undefined ? '/teams status' : `/teams launch ${goal}`;
+  const command = request ? `/teams handoff ${JSON.stringify(handoff)} ${requestDigest(request)}` : goal === undefined ? (process.stdin.isTTY && process.stdout.isTTY ? '/teams home' : '/teams status') : `/teams launch ${goal}`;
   const outputArgs = request || !process.stdin.isTTY || !process.stdout.isTTY ? ['--mode', 'json'] : [];
   const result = await run(pi, [...outputArgs, ...(request ? ['-p'] : []), '--no-extensions', '-e', extension, '--', command], { capture: Boolean(request) });
   if (result.signal) { terminate(result.signal); return; }

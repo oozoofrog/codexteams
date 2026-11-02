@@ -1,5 +1,33 @@
 # Implementation ledger — docs/plans/2026-11-01-pi-extension.md
 
+## 2026-11-02 Pi 자체 팀 모드 0.6.0 — 검증·현재 Pi 적용 완료
+
+- 사용자가 Codex 대화의 조율을 명시적으로 거부했다. 제품 런타임은 Pi Teams만으로 ON/OFF와 일반 요청·중간 변경을 처리해야 한다. 현재 요구와 개발 시 Codex의 역할을 구분한다. 설계·계획은 `2026-11-02-pi-team-mode.md` 문서 두 곳에 기록했다.
+- 검증된 미커밋 0.5.0 전체와 상태·설정은 외부 `codexteams-team-mode-060`에 보존했다. 210개 회귀 근거를 재사용하며 완료된 0.5.0을 재시작하지 않는다. 같은 Pi 창 7016을 유지하고 작성 중에는 변경하지 않는 전역 0.2.1을 프로젝트 설정으로 선택했다.
+- 실제 Astra task-6의 첫 시도는 광범위 경로 탐색 명령의 10초 시간 초과로 종료됐다. 같은 작업을 한정된 소스로 재개했고, 전용 읽기 전용 coordinator와 process-owned supervisor 구조를 채택했다. 부모 Pi 모델 변경이나 native parent wake, 외부 Codex 런타임은 사용하지 않는다.
+- 실제 Terra task-7은 과거 0.4.0 프로젝트 목표와의 충돌을 먼저 보고했다. Root는 최신 사용자 요구가 현재 권한임을 명시하고 과거 목표를 배경 데이터로 보존하도록 결정했다. 다음 시도는 protocol만 구현한 미완료 결과였다. 당시 그 근거를 보존하고 같은 owner에서 상태·supervisor·입력 통합을 계속했다. 실제 Sol task-8은 writer 종료 후 독립 검토를 위해 대기했다. 각 high, 모델 대체 없음.
+- 초기에는 구현·검증이 진행 중이었다. ON/OFF 스위치나 protocol 테스트만으로 독립 실행을 완료했다고 보고하지 않는다. 최종 기준은 Pi 일반 입력 하나에서 요청별 실행·검토·수정이 외부 Codex 조율 없이 진행되는 것이다. 이 초기 단계에서는 사용자 수락, commit·push·전역 설치·인증 변경을 수행하지 않았다.
+- Terra의 3~5번째 시도는 상태·managed 실행 경계·자동 실행/검토 파이프라인을 단계적으로 추가했지만 미완료였다. 6번째 시도는 일반 입력·모드 명령·Home 제어·명시적 요청 중단/재개를 연결했고 focused 33개와 typecheck를 통과했다. 당시 자연어 변경·우선순위·중단과 단계별 재개가 남아 있어 같은 작업의 7번째 시도를 진행했다. 각 미완료 결과를 외부 근거에 보존했다.
+- 외부 RPC 검증기는 설정 후 일반 입력 한 번만 허용한다. 별도 읽기 전용 검토에서 발견한 오래된 reviewer read 재사용, 잘못된 digest 비교, 수정 지시 전달과 check 연결의 누락을 수정했다. 당시에는 실행 전 준비 상태였다. 실패 시에도 정리 전 원문과 상태를 먼저 보존한다. Node 22 구문 확인은 실제 Pi 실행 근거로 사용하지 않는다.
+- 반복 검증에는 `verify-work`의 프로젝트 계약을 사용한다. Root는 외부 adapter를 준비했고, 제품 작성과 검토가 끝난 소스의 해시를 고정한 뒤 계약을 실행한다. fixture 모델 이름·고정 usage는 로컬 프로토콜 데이터이며 실제 모델 신원이나 계정 사용량을 증명하지 않는다.
+- Sol 검토 1의 전체 owner 종료 차단, stale PASS 재검토, 실제 amended scope 전달, coordinator 표시·사용량 5개와 Root의 기존 수동 큐 내부 scheduling을 수정했다. 검토 2는 이를 확인했고 추가로 발견한 16 KiB reviewer payload 차단도 같은 Terra 작업에서 수정했다. a9 집중 검사 timeout은 macOS 임시 경로의 canonical 비교 불일치를 재현해 고쳤다. 모든 FAIL·중단·timeout과 각 시도의 원문은 외부 근거에 보존했다.
+- a11 당시 전체 240개·typecheck·loader·pack PASS이며 작성이 멈췄다. 93개 제품 파일을 고정한 뒤 single/payload/midwork 실제 Pi RPC와 Node 22 큰 scope metadata 조회가 통과했다. 실제 reviewer 입력은 최대 19,125바이트였고 24 MiB 초과 JSON 전달도 별도 실제 subprocess로 확인했다. 당시 최종 Sol 재검토와 같은 Pi 적용은 진행 중이었다. 이 기술 PASS를 사용자 수락으로 바꾸지 않는다.
+
+
+- a12에서 실제 Pi의 8 MiB 초과 사용자 echo 경계를 수정했다. 최종 전체 247개·typecheck·focused 56개·loader·pack과 실제 9,437,216바이트 worker transport, standalone RPC single/payload/midwork, Node22 packaged scope 조회가 PASS다. 실제 Sol 검토 4는 PASS이며 앞선 FAIL은 모두 보존했다.
+- 원래 프로젝트 실행 설정을 바이트 단위로 복원하고 같은 Pi 창 7016에 0.6.0을 적용했다. 실제 Astra high의 ON 일반 질문, ON reload 유지, OFF reload 유지와 기존 부모 Sol의 일반 입력을 확인했다. ON 질문은 기존 작업 8개와 목표를 바꾸지 않았고 OFF 입력과 최종 기본 화면 조회는 Teams 상태를 바꾸지 않았다. 현재 팀 모드 OFF·실행 없음이며 사용자 수락은 0개다.
+- 출시 전 README의 `/teams`/`status` 구분과 ON 일반 입력 설명을 같은 Terra task-7의 문서 전용 13번째 시도에서 수정했다. `/.pi/settings.json`도 Git 제외 규칙에 추가했다. 실제 Sol 검토 5는 문서 변경분 PASS다. Root는 a12의 93개 파일 중 README만 달라졌음을 확인했고 실행 소스·테스트·package가 같아 통과한 검증을 재사용한다.
+- 사용자가 완료 후 commit·push를 명시적으로 요청했다. 이 후속 지시는 앞선 미게시 범위에 현재 브랜치의 Git 반영을 추가한다. Root가 문서·패키지·staging 검사를 마친 뒤 `task/team-session-navigation`을 commit·push한다. main 병합, 전역 CLI 교체, 인증 변경과 사용자 수락은 하지 않는다. 전체 원문·최종 해시·실제 화면·추가 문서 검토는 외부 `codexteams-team-mode-060`에 보존했다.
+
+## 2026-11-02 팀 기본 화면 0.5.0
+
+- 사용자가 사용 흐름과 실행 여부를 알기 어렵다고 보고했다. 실제 초기 상태는 실행 없음·기존 결과 2개 확인 대기였다. 수락 수를 진행률처럼 보이게 한 표시와 검증 중에도 검토 대기로 남는 행을 확인했다. 설계는 `docs/design/2026-11-02-team-home.md`, 계획은 `docs/plans/2026-11-02-team-home.md`에 기록했다.
+- 실제 Astra 설계 검토, GPT 6.1 Terra 단독 구현, GPT 6.1 Sol 독립 검토를 같은 Terminal/Pi 창 7016에서 진행했다. 반환 모델은 각각 `openai/gpt-6-astra`, `openai/gpt-6.1-terra`, `openai/gpt-6.1-sol`이다. 각 high를 요청했다. Normal의 native tier mapping은 확인하지 않았다. 작성 중에는 기존 전역 0.2.1을 프로젝트 설정으로 선택했고, 최종 검토 후 원래 설정을 바이트 단위로 복원해 같은 Pi에서 0.5.0을 불러왔다.
+- 첫 Terra 결과는 상태/위젯만 구현한 미완료였다. 두 번째 시도의 실제 SDK 복귀 테스트 시간 초과와 종료되지 않는 검증을 보존하고 명시적으로 중단했다. 같은 작업을 재개해 패널 실패 정리와 SDK Home 복귀를 수정했다. Sol의 두 FAIL에서 예약된 handoff 시작, 실행 중 작업 추가, 일괄 실행 중 추가 작업의 자동 실행을 수정했다. 현재 일괄 실행은 요청 시점의 작업 ID만 실행하며 이후 추가한 작업은 다음 명시적 시작까지 대기한다. 기존 동작 변경과 근거를 설계·README에 기록했다.
+- 최종 전체 테스트 210개, typecheck, 실제 loader, pack, Node 22.19 설치 패키지 조회가 통과했다. Sol의 Review3와 최종 표시 변경 검토가 PASS다. 실제 화면 검수에서 발견한 90% 패널 여백의 배경 겹침도 별도 FAIL로 보존하고 100% 폭·셀 너비 채움으로 수정했다.
+- 0.5.0 검증 당시 같은 Pi의 120×30 화면에서 Home→작업→최종 결과→PageDown→작업 행동→Home을 확인했다. 조회 전후 상태 파일 바이트가 같았다. 실제 controller check의 검증 중→실행 없음 전환과 최신 Terra attempt 연결, 테스트 49개 통과를 확인했다. 모델 시도 수와 사용자 수락 수는 바뀌지 않았다. 당시 기본 화면을 열어뒀다.
+- 근거는 `/Users/oozoofrog/.codex/visualizations/2026/11/02/codexteams-usability-050`에 있다. 미완료·실패·중단 결과와 최종 로그·해시·스크린샷을 보존했다. 당시 변경은 로컬 작업트리에 있었으며 같은 Pi에 적용했다. 전역 CLI 교체, commit, push, 사용자 결과 수락은 하지 않았다. 사용자의 사용성 수락과 VoiceOver 검증은 별도다.
+
 ## 2026-11-01 team/task session navigation0.4.0
 
 - User explicitly requests design+implementation of team parent/task session grouping, status/navigation, active execution surviving screen moves, and actual visible Terminal Teams development/verification as before. Models remain actual Astra plan / GPT6.1Terra implementation / GPT6.1Sol independent review, high; current Codex session and user auth/settings unchanged.

@@ -239,10 +239,14 @@ test("launch reserves planning and execution, publishes the plan first and prese
   await assert.rejects(controller.run(), /실행 중/);
   release();
   const summary = await launching;
-  assert.deepEqual(summary.executed, ["scan", "task-3"]);
-  assert.deepEqual(summary.blocked, ["view"]);
-  assert.deepEqual(summary.waitingReview, ["scan", "task-3"]);
+  assert.deepEqual(summary.executed, ["scan"]);
+  assert.deepEqual(summary.blocked, ["view", "task-3"]);
+  assert.deepEqual(summary.waitingReview, ["scan"]);
+  assert.equal(controller.snapshot().tasks.find(task => task.id === "task-3")?.attempts.length, 0);
   assert.equal(controller.busy, false);
+  const followup = await controller.run();
+  assert.deepEqual(followup.executed, ["task-3"]);
+  assert.deepEqual(followup.blocked, ["view"]);
 });
 
 test("launch cancellation while planning never starts a task worker", async t => {

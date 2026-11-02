@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, open, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +8,8 @@ import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { runPiWorker, resolvePiInvocation } from "../src/runtime/pi-runner.ts";
+import { buildReviewerPrompt } from "../src/core/team-mode-protocol.ts";
+import { reviewScopeDigest } from "../src/core/state-validation.mjs";
 import type { WorkerEvent, WorkerRequest } from "../src/core/types.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/pi-worker.mjs", import.meta.url));
@@ -37,8 +40,56 @@ test("worker invocation keeps cwd, literal prompt, explicit routing, session, an
   for (const flag of ["-p", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-mcp"]) {
     assert.ok(args.includes(flag), flag);
   }
-  assert.deepEqual(args.slice(-2), ["--", req.prompt]);
+  assert.equal(captured.prompt.trim(), `<codexteams-prompt>\n${req.prompt}\n</codexteams-prompt>`);
+  assert.equal(args.includes(req.prompt), false);
   assert.equal(result.sessionId, req.sessionId);
+});
+
+test("large UTF-8 review scope reaches the subprocess through redirected stdin without argv expansion", async (t) => {
+  // 256 maximum-length applied amendments, 16 full check tails, and escaped controls.
+  const scope = { requestText: "한".repeat(5461) + "x", amendments: Array.from({ length: 256 }, (_, i) => ({ requestId: `amend-${i}`, instruction: "한".repeat(5461) + "x" })), writer: { id: "work", title: "title", description: "description", acceptance: Array.from({ length: 16 }, () => "\u0001".repeat(2048)) }, checks: Array.from({ length: 16 }, (_, i) => ({ id: `check-${i}`, command: `check-${i}`, status: "passed" as const, exitCode: 0, output: "🙂".repeat(2000), outputTruncated: false })) };
+  const identity = { implementationAttemptId: "attempt", artifactDigest: "a".repeat(64), checkIds: scope.checks.map(c => c.id), requestId: "request", requestRevision: 257, scopeDigest: reviewScopeDigest(scope) };
+  const prompt = buildReviewerPrompt(identity, scope, "implemented");
+  assert.ok(Buffer.byteLength(prompt) > 4 * 1024 * 1024);
+  const result = await runPiWorker(await request(t, "prompt-digest", { prompt, tools: ["read"] }));
+  assert.equal(result.outcome, "success", result.error);
+  const captured = JSON.parse(result.text);
+  const input = `<codexteams-prompt>\n${prompt}\n</codexteams-prompt>`;
+  assert.equal(captured.bytes, Buffer.byteLength(input));
+  assert.equal(captured.digest, createHash("sha256").update(input).digest("hex"));
+  assert.equal(captured.args.includes(prompt), false);
+  // JSON escaping can expand one valid instruction byte to six transport bytes.
+  for (const amendment of scope.amendments) amendment.instruction = "\u0001".repeat(16383) + "x";
+  const escaped = buildReviewerPrompt({ ...identity, scopeDigest: reviewScopeDigest(scope) }, scope, "implemented");
+  assert.ok(Buffer.byteLength(escaped) > 24 * 1024 * 1024);
+  const escapedResult = await runPiWorker(await request(t, "prompt-digest", { prompt: escaped, tools: ["read"] }));
+  assert.equal(escapedResult.outcome, "success", escapedResult.error);
+  const escapedInput = `<codexteams-prompt>\n${escaped}\n</codexteams-prompt>`;
+  assert.equal(JSON.parse(escapedResult.text).digest, createHash("sha256").update(escapedInput).digest("hex"));
+});
+
+test("Pi-compatible user message echoes preserve a large escaped prompt and reach assistant completion", { timeout: 30000 }, async (t) => {
+  const prompt = JSON.stringify({ amendments: Array.from({ length: 256 }, (_, i) => ({ id: `a${i}`, instruction: "\u0001".repeat(16383) + "한" })) });
+  assert.ok(Buffer.byteLength(prompt) > 24 * 1024 * 1024);
+  const result = await runPiWorker(await request(t, "echo-prompt", { prompt, tools: ["read"] }));
+  assert.equal(result.outcome, "success", result.error);
+  assert.equal(result.text, "Finished 🔧\u2028line");
+});
+
+test("user-like records cannot exceed the prompt-derived echo bound", { timeout: 30000 }, async t => {
+  const result = await runPiWorker(await request(t, "large-forged-user", { prompt: "small", tools: ["read"] }));
+  assert.equal(result.outcome, "failed"); assert.match(result.error ?? "", /limit/i);
+});
+
+test("prompts larger than the 66 MiB input bound fail before launch", { timeout: 30000 }, async t => {
+  const result = await runPiWorker(await request(t, "success", { prompt: "x".repeat(66 * 1024 * 1024 + 1), tools: ["read"] }));
+  assert.equal(result.outcome, "failed"); assert.match(result.error ?? "", /transport limit/i);
+});
+
+for (const mode of ["large-nonuser", "large-wrong-user", "large-truncated-user", "large-malformed-user"]) test(`${mode} remains a bounded protocol failure`, { timeout: 30000 }, async t => {
+  const result = await runPiWorker(await request(t, mode, { prompt: "한".repeat(3 * 1024 * 1024), tools: ["read"] }));
+  assert.equal(result.outcome, "failed");
+  assert.match(result.error ?? "", /limit|truncated|newline|JSON|protocol/i);
 });
 
 test("only Bash workers load the private guard while discovered extensions stay disabled", async (t) => {

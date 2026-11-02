@@ -96,6 +96,7 @@ export interface VerificationCheck {
   exitCode: number | null;
   output: string;
   status: "running" | "passed" | "failed" | "interrupted";
+  source?: "user" | "team_coordinator";
 }
 
 export interface WorkspaceObservation {
@@ -133,6 +134,20 @@ export interface NavigationRoot { id: string; file: string }
 export interface NavigationView { kind: "task" | "planning"; targetId: string; sessionId: string; file: string; parentSession: string; workerSessionId?: string }
 export interface NavigationState { root: NavigationRoot; views: NavigationView[] }
 
+export interface TeamModeRequest {
+  id: string; text: string; origin: "interactive" | "rpc"; sessionId: string; receivedAt: string;
+  streamingIntent?: "steer" | "followUp";
+  revision: number; status: "received" | "classifying" | "queued" | "running" | "paused" | "blocked" | "answered" | "awaiting_user_acceptance" | "cancelled" | "failed";
+  taskIds: string[]; answer?: string; reason?: string; checks?: string[]; checkpoint?: "implementation" | "checks" | "review" | "fix" | "revalidate";
+  amendments?: Array<{ requestId: string; instruction: string; timing: "after_current" | "interrupt_then_resume"; status: "pending" | "applied" }>;
+  artifactDigest?: string; fixInstruction?: string;
+}
+export interface CoordinatorAttempt extends Attempt { requestId: string; generation: number; requestRevision: number }
+export interface TeamModeEvent { id: string; requestId: string; kind: "received" | "applied" | "uncertain"; at: string }
+export interface ReviewScope { requestText: string; amendments: Array<{ requestId: string; instruction: string }>; writer: { id: string; title: string; description: string; acceptance: string[] }; checks: Array<{ id: string; command: string; status: VerificationCheck["status"]; exitCode: number | null; output: string; outputTruncated: boolean }> }
+export interface TeamModeReviewEvidence { id: string; requestId: string; implementationTaskId: string; implementationAttemptId: string; reviewerTaskId: string; reviewerAttemptId: string; artifactDigest: string; verdict: "pass" | "changes_required" | "blocked"; checkIds: string[]; requestRevision?: number; scope?: ReviewScope; scopeDigest?: string }
+export interface TeamModeState { version: 1; enabled: boolean; generation: number; requests: TeamModeRequest[]; coordinatorAttempts: CoordinatorAttempt[]; events: TeamModeEvent[]; reviewEvidence: TeamModeReviewEvidence[] }
+
 export interface ProjectState {
   schemaVersion: 1;
   id: string;
@@ -145,6 +160,7 @@ export interface ProjectState {
   tasks: Task[];
   planningAttempts: Attempt[];
   navigation?: NavigationState;
+  teamMode?: TeamModeState;
   recoveryRequired?: boolean;
   recoveryReason?: string;
 }

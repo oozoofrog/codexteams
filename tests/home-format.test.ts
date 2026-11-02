@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ProjectStore } from "../src/core/store.ts";
+import { TeamController } from "../src/core/controller.ts";
+import { widgetLines } from "../src/ui/format.ts";
+import { homeOverview } from "../src/ui/home.ts";
+import { emptyUsage } from "../src/core/usage.ts";
+
+test("widget distinguishes reviewable results, active check and unsafe terminal content", async t => {
+  const root = mkdtempSync(join(tmpdir(), "codexteams-home-format-"));
+  const team = new TeamController(ProjectStore.open(root), { validateProfile: async () => {}, runner: async req => ({ outcome: "success", text: "result", exitCode: 0, usage: emptyUsage(), effectiveModels: [], sessionId: req.sessionId }) });
+  t.after(async () => { await team.shutdown(); rmSync(root, { recursive: true, force: true }); });
+  const first = team.add("developer", "first\x1b]0;malicious\x07");
+  await team.run(first.id);
+  const second = team.add("designer", "second");
+  await team.run(second.id);
+  const idle = widgetLines(team.snapshot(), "준비", undefined).join("\n");
+  assert.match(idle, /실행 없음 · 결과 확인 2개/);
+  assert.doesNotMatch(idle, /[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
+  const check = widgetLines(team.snapshot(), "검증", { id: "check", kind: "check", phase: "checking", taskId: first.id, startedAt: "2026-01-01T00:00:00.000Z", lastActivityAt: "2026-01-01T00:00:00.000Z" }).join("\n");
+  assert.match(check, /검증 중/);
+  assert.match(check, /first/);
+  const orphan = team.snapshot(); orphan.tasks[0].status = "running";
+  const screen = homeOverview(root, orphan, undefined, "", "");
+  assert.match(screen.status!, /실행 여부 확인 필요/);
+  assert.ok(screen.choices.some(choice => choice.id === "recovery-check"));
+});

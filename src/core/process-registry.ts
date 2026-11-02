@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { TeamController } from "./controller.ts";
+import type { TeamModeSupervisor } from "./team-mode.ts";
 
 // This symbol intentionally has a stable name across independently loaded module graphs.
 const KEY = Symbol.for("codexteams.process-owners");
@@ -14,11 +15,12 @@ export interface ScreenBinding {
 }
 export interface ProcessOwner {
   controller: TeamController;
+  supervisor?: TeamModeSupervisor;
   registry: ExtensionContext["modelRegistry"];
   sessionDir?: string;
   binding?: ScreenBinding;
 }
-interface Registry { version: 1; source: string; owners: Map<string, ProcessOwner>; cleanup?: Promise<void> }
+interface Registry { version: 1; source: string; owners: Map<string, ProcessOwner>; cleanup?: Promise<void>; pendingHome?: { root: string; file: string } }
 export function processRegistry(): Registry {
   const global = globalThis as typeof globalThis & { [KEY]?: Registry };
   const existing = global[KEY];
@@ -30,12 +32,23 @@ export function processRegistry(): Registry {
 }
 export async function cleanupOwners(registry: Registry): Promise<void> {
   if (registry.cleanup) return registry.cleanup;
+  const failures: unknown[] = [];
+  const failedFences = new Set<ProcessOwner>();
+  for (const owner of registry.owners.values()) owner.binding = undefined;
+  for (const owner of registry.owners.values()) {
+    try { owner.supervisor?.fenceScheduling?.(); } catch (error) { failedFences.add(owner); failures.push(error); }
+    try { owner.controller.fenceScheduling?.(); } catch (error) { failedFences.add(owner); failures.push(error); }
+  }
+  for (const owner of registry.owners.values()) {
+    try { owner.supervisor?.beginShutdown(); } catch (error) { failedFences.add(owner); failures.push(error); }
+    try { owner.controller.beginShutdown?.(); } catch (error) { failedFences.add(owner); failures.push(error); }
+  }
   registry.cleanup = (async () => {
-    const failures: unknown[] = [];
     for (const [root, owner] of registry.owners) {
-      owner.binding = undefined;
-      try { await owner.controller.shutdown(); registry.owners.delete(root); }
-      catch (error) { failures.push(error); }
+      let failed = failedFences.has(owner);
+      try { await owner.supervisor?.shutdown(); } catch (error) { failed = true; failures.push(error); }
+      try { await owner.controller.shutdown(); } catch (error) { failed = true; failures.push(error); }
+      if (!failed) registry.owners.delete(root);
     }
     if (failures.length) throw new AggregateError(failures, "Some codexteams owners could not be cleaned up.");
   })();

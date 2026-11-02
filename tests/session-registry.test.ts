@@ -16,6 +16,18 @@ test("registry rejects incompatible schema and source without replacing them", (
   } finally { if (previous === undefined) delete global[key]; else global[key] = previous; }
 });
 
+test("all owners are fenced and detached before the first drain can wait", async () => {
+  let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; });
+  const fenced: string[] = [], registry = { version: 1 as const, source: "fixture", owners: new Map([
+    ["a", { binding: {}, controller: { beginShutdown: () => fenced.push("controller-a"), shutdown: () => pending }, supervisor: { beginShutdown: () => fenced.push("supervisor-a"), shutdown: async () => {} } }],
+    ["b", { binding: {}, controller: { beginShutdown: () => fenced.push("controller-b"), shutdown: async () => {} }, supervisor: { beginShutdown: () => fenced.push("supervisor-b"), shutdown: async () => {} } }],
+  ]) };
+  const cleanup = cleanupOwners(registry as never);
+  assert.deepEqual(fenced, ["supervisor-a", "controller-a", "supervisor-b", "controller-b"]);
+  assert.equal(registry.owners.get("b")!.binding, undefined);
+  release(); await cleanup;
+});
+
 test("final cleanup tries every root and preserves failed owner for retry", async () => {
   const calls: string[] = []; let fails = true;
   const registry = { version: 1 as const, source: "fixture", owners: new Map([
