@@ -1,4 +1,6 @@
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, readdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { deliverChat, matchesNativeInput, parentRoutingControl, persistedNativeInputs } from "./core/team-chat.ts";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, readdirSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Key, matchesKey, sliceByColumn, truncateToWidth } from "@earendil-works/pi-tui";
@@ -7,6 +9,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { TeamController } from "./core/controller.ts";
 import { TeamModeSupervisor } from "./core/team-mode.ts";
+import { isAcceptedRequest } from "./core/state-validation.mjs";
 import { ProjectStore } from "./core/store.ts";
 import { cleanupOwners, processRegistry, type ProcessOwner } from "./core/process-registry.ts";
 import { checkedHeader, checkedView, ensureView, VIEW_MARKER } from "./core/navigation.ts";
@@ -95,9 +98,47 @@ export default function codexteams(pi: ExtensionAPI): void {
     if (owner) {
       owner.registry = ctx.modelRegistry;
       if (ctx.sessionManager?.getSessionDir) owner.sessionDir = ctx.sessionManager.getSessionDir();
-      owner.binding = { token, changed: showWidget, message: (content, type = "codexteams") => pi.sendMessage({ customType: type, content, display: true }, { triggerTurn: false }), notify: (content, level) => notify(ctx, content, level) };
-      try { showWidget(); } catch { /* UI attachment cannot affect the owner. */ }
+      owner.binding = { token, canAccept: (request, offer) => {
+        try {
+          const selected = registry.owners.get(root);
+          if (!selected || selected !== owner || selected.binding?.token !== token || context !== ctx || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx) || realpathSync(ctx.cwd) !== root || ctx.sessionManager.getSessionId() !== request.sessionId || request.confirmationContextId !== confirmationContextId || offer.sessionId !== request.sessionId) return false;
+          selected.controller.store.assertOwner();
+          const state = selected.controller.snapshot(), branch = ctx.sessionManager.getBranch(), journal = state.teamMode?.journal ?? [];
+          const input = journal.find(e => e.requestId === request.id && e.role === "user" && e.kind === "input");
+          if (!input || input.delivery !== "delivered" || !branch.some(e => e.id === input.historyEntryId)) return false;
+          return journal.filter(e => e.requestId === offer.requestId && e.requestRevision === offer.requestRevision && e.kind === "result").every(e => e.delivery === "delivered" && branch.some(record => record.type === "custom_message" && record.customType === "codexteams.mode" && record.id === e.historyEntryId && record.content === e.text && (record.details as { projectId?: string; journalId?: string })?.projectId === state.id && (record.details as { journalId?: string })?.journalId === e.id));
+        } catch { return false; }
+      }, changed: () => { showWidget(); flushChat(ctx); }, message: (content, type = "codexteams") => pi.sendMessage({ customType: type, content, display: true }, { triggerTurn: false }), notify: (content, level) => notify(ctx, content, level) };
+      try { showWidget(); flushChat(ctx); } catch { /* UI attachment cannot affect the owner. */ }
     }
+  }
+
+  let confirmationContextId = randomUUID();
+  let nativeAdmission: { root: string; sessionId: string; requestId: string; confirmationContextId: string; aborted: boolean; controlRecorded?: boolean; physicalModel?: ExtensionContext["model"]; thinkingLevel?: ReturnType<ExtensionAPI["getThinkingLevel"]> } | undefined;
+  let flushingChat = false;
+  function flushChat(ctx: ExtensionContext): void {
+    if (flushingChat || !context || context !== ctx || !ctx.isProjectTrusted() || viewMarker(ctx) || isOriginalWorker(ctx)) return;
+    const selected = registry.owners.get(realpathSync(ctx.cwd));
+    if (!selected || selected !== owner || selected.binding?.token !== token) return;
+    flushingChat = true;
+    try {
+      const sessionId = ctx.sessionManager.getSessionId();
+      const deliver = () => { const file = ctx.sessionManager.getSessionFile?.(), sessionReady = parentSessionReady(ctx); return deliverChat(selected.controller.store, { sessionId, history: ctx.sessionManager.getBranch(), sessionReady, nativeInputs: file && sessionReady ? persistedNativeInputs(file) : [], send: message => pi.sendMessage(message, { triggerTurn: false }) }); };
+      deliver(); deliver(); deliver(); // Reconcile immediate idle persistence; uncertain queued messages are never resubmitted.
+      selected.supervisor?.wake();
+    } finally { flushingChat = false; }
+  }
+
+  function parentSessionReady(ctx: ExtensionContext): boolean {
+    const file = ctx.sessionManager.getSessionFile?.(); if (!file) return true; // Explicit in-memory/no-session runtimes stay in memory.
+    try { checkedHeader(file, realpathSync(ctx.cwd), ctx.sessionManager.getSessionId()); return true; } catch { return false; }
+  }
+  function refreshCurrentChat(ctx: ExtensionContext): void {
+    if (!context) return;
+    try { if (realpathSync(ctx.cwd) === realpathSync(context.cwd) && ctx.sessionManager.getSessionId() === context.sessionManager.getSessionId()) flushChat(context); } catch { /* A replaced session is not a delivery target. */ }
+  }
+  function teamOwnsParent(ctx: ExtensionContext): boolean {
+    try { const root = realpathSync(ctx.cwd); return Boolean(registry.owners.get(root)?.controller.snapshot().teamMode?.enabled || (nativeAdmission?.root === root && nativeAdmission.sessionId === ctx.sessionManager.getSessionId())); } catch { return false; }
   }
 
   async function getController(ctx: ExtensionContext): Promise<TeamController> {
@@ -110,7 +151,7 @@ export default function codexteams(pi: ExtensionAPI): void {
       created.controller = new TeamController(ProjectStore.open(root), { runner: runPiWorker, validateProfile: profile => validateProfileWithRegistry(profile, created.registry), onChange: () => { try { created.binding?.changed(); } finally { created.supervisor?.wake(); } } });
       registry.owners.set(root, created); found = created;
     }
-    found.supervisor ??= new TeamModeSupervisor(found.controller.store, { controller: found.controller, runner: runPiWorker, validateProfile: profile => validateProfileWithRegistry(profile, found!.registry), onChange: message => { const binding = found!.binding; binding?.changed(); if (message) binding?.message(message, "codexteams.mode"); } });
+    found.supervisor ??= new TeamModeSupervisor(found.controller.store, { controller: found.controller, runner: runPiWorker, validateProfile: profile => validateProfileWithRegistry(profile, found!.registry), canAccept: (request, offer) => found!.binding?.canAccept?.(request, offer) ?? false, onChange: () => { found!.binding?.changed(); } });
     attach(ctx);
     return found.controller;
   }
@@ -793,16 +834,77 @@ export default function codexteams(pi: ExtensionAPI): void {
   pi.on("input", async (event, ctx) => {
     if (viewMarker(ctx) || isOriginalWorker(ctx)) { if (ctx.hasUI) ctx.ui.notify("읽기 전용 세션입니다. 팀 화면으로 돌아가세요.", "warning"); return { action: "handled" }; }
     if (event.source === "extension") return { action: "continue" };
+    let nativePass = false;
     try {
       const root = realpathSync(ctx.cwd), current = registry.owners.get(root);
       const state = current?.controller.snapshot() ?? ProjectStore.read(root);
       if (!state?.teamMode?.enabled) return { action: "continue" };
       if (event.images?.length) { notify(ctx, "팀 모드는 이미지 첨부를 지원하지 않습니다. 텍스트만 다시 보내세요.", "warning"); return { action: "handled" }; }
       const acquired = await acquireForAction(ctx); acquired.verify();
-      const requestId = acquired.owner.supervisor!.ingest({ text: event.text, origin: event.source, sessionId: ctx.sessionManager.getSessionId(), ...(event.streamingBehavior ? { streamingIntent: event.streamingBehavior } : {}) });
-      notify(ctx, `요청 접수 · ${event.text.replace(/\s+/g, " ").slice(0, 80)} · 진행 확인은 /teams`);
-    } catch (error) { notify(ctx, `팀 요청을 접수하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, "error"); }
-    return { action: "handled" };
+      const sessionFile = ctx.sessionManager.getSessionFile?.();
+      const persistent = Boolean(sessionFile);
+      if (sessionFile) {
+        let absent = false;
+        try {
+          if (!lstatSync(sessionFile).isFile()) throw new Error("세션 경로가 일반 파일이 아닙니다.");
+        }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          absent = true;
+        }
+        if (!absent) checkedHeader(sessionFile, root, ctx.sessionManager.getSessionId());
+        nativePass = absent && !nativeAdmission && ctx.isIdle();
+      }
+      const requestId = acquired.owner.supervisor!.ingest({ text: event.text, origin: event.source, sessionId: ctx.sessionManager.getSessionId(), confirmationContextId, ...(persistent ? { inputPersistence: nativePass ? "native" as const : "custom" as const } : {}), visibleJournalIds: ctx.sessionManager.getBranch().filter(entry => entry.type === "custom_message" && entry.customType === "codexteams.mode" && (entry.details as { projectId?: string })?.projectId === acquired.owner.controller.snapshot().id).map(entry => (entry as unknown as { details: { journalId: string } }).details.journalId).filter(id => typeof id === "string"), ...(ctx.sessionManager.getLeafId?.() ? { branchAnchorId: ctx.sessionManager.getLeafId()! } : {}), ...(event.streamingBehavior ? { streamingIntent: event.streamingBehavior } : {}) });
+      if (nativePass) nativeAdmission = { root, sessionId: ctx.sessionManager.getSessionId(), requestId, confirmationContextId, aborted: false };
+      flushChat(ctx);
+    } catch (error) { nativePass = false; notify(ctx, `팀 요청을 접수하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    return { action: nativePass ? "continue" : "handled" };
+  });
+  pi.on("before_agent_start", async (event, ctx) => {
+    if (!teamOwnsParent(ctx)) return;
+    if (nativeAdmission && nativeAdmission.root === realpathSync(ctx.cwd) && nativeAdmission.sessionId === ctx.sessionManager.getSessionId() && nativeAdmission.confirmationContextId === confirmationContextId) {
+      nativeAdmission.aborted = true; nativeAdmission.physicalModel = ctx.model; nativeAdmission.thinkingLevel = pi.getThinkingLevel();
+      if (event.messageType === "user") { const admission = nativeAdmission; registry.owners.get(admission.root)?.controller.store.update(s => { const request = s.teamMode?.requests.find(r => r.id === admission.requestId); if (request && !isAcceptedRequest(s, request) && event.prompt !== request.text) request.nativeText = event.prompt; }); }
+    }
+    ctx.abort(); // Public startup cancellation: the genuine human message still enters native persistence.
+  });
+  pi.on("session_before_compact", async (event, ctx) => event.reason !== "manual" && teamOwnsParent(ctx) ? { cancel: true } : undefined);
+  pi.on("cache_warming_decision", async (_event, ctx) => teamOwnsParent(ctx) ? { action: "stop" } : undefined);
+  pi.on("session_tree", async () => { confirmationContextId = randomUUID(); nativeAdmission = undefined; });
+  pi.on("agent_end", async (_event, ctx) => { refreshCurrentChat(ctx); });
+  pi.on("agent_settled", async (event, ctx) => {
+    const admission = nativeAdmission;
+    if (!admission || admission.root !== realpathSync(ctx.cwd) || admission.sessionId !== ctx.sessionManager.getSessionId()) { refreshCurrentChat(ctx); return; }
+    const selected = registry.owners.get(admission.root);
+    try {
+      if (!event.aborted || !admission.aborted || !admission.controlRecorded || admission.confirmationContextId !== confirmationContextId || !admission.physicalModel || admission.thinkingLevel === undefined || !selected || !parentSessionReady(ctx)) throw new Error("기본 대화 기록 연결의 종료 근거를 확인하지 못했습니다.");
+      const before = ctx.model;
+      if (!before || before.provider !== admission.physicalModel.provider || before.id !== admission.physicalModel.id || !(await pi.setModel(admission.physicalModel))) throw new Error("선택한 모델을 대화 기록에 다시 확인하지 못했습니다.");
+      if (nativeAdmission !== admission || admission.confirmationContextId !== confirmationContextId || ctx.sessionManager.getSessionId() !== admission.sessionId) throw new Error("대화가 변경되어 모델 기록을 확인하지 못했습니다.");
+      pi.setThinkingLevel(admission.thinkingLevel); // Session-only public APIs; no default/global setting persistence.
+      pi.appendEntry("codexteams.parent-routing-restored", { software_generated_control: true, requestId: admission.requestId, sessionId: admission.sessionId, confirmationContextId, provider: admission.physicalModel.provider, model: admission.physicalModel.id, thinkingLevel: admission.thinkingLevel });
+      selected.controller.store.update(s => { if (s.teamMode?.pendingNativeRequestId !== admission.requestId) throw new Error("기본 대화 연결 요청이 변경되었습니다."); delete s.teamMode.pendingNativeRequestId; });
+    } catch (error) {
+      if (selected) { const reason = error instanceof Error ? error.message : String(error); selected.controller.store.update(s => { const request = s.teamMode?.requests.find(r => r.id === admission.requestId); if (request && !isAcceptedRequest(s, request)) { request.status = "blocked"; request.reason = reason; } }); selected.binding?.notify(reason, "error"); }
+    } finally { if (nativeAdmission === admission) nativeAdmission = undefined; refreshCurrentChat(ctx); }
+  });
+  pi.on("message_end", async (event, ctx) => {
+    refreshCurrentChat(ctx);
+    const admission = nativeAdmission;
+    if (!admission?.aborted || admission.controlRecorded || admission.confirmationContextId !== confirmationContextId || admission.root !== realpathSync(ctx.cwd) || admission.sessionId !== ctx.sessionManager.getSessionId() || event.message.role !== "assistant" || !ctx.model || !parentSessionReady(ctx)) return;
+    const selected = registry.owners.get(admission.root);
+    const mode = selected?.controller.snapshot().teamMode;
+    const request = mode?.requests.find(r => r.id === admission.requestId);
+    if (!selected || request?.inputPersistence !== "native" || !admission.physicalModel || ctx.model.provider !== admission.physicalModel.provider || ctx.model.id !== admission.physicalModel.id) return;
+    const receipt = mode?.journal?.find(entry => entry.requestId === request.id && entry.sessionId === admission.sessionId && entry.requestRevision === request.revision && entry.role === "user" && entry.kind === "input" && entry.delivery === "delivered" && entry.text === request.text);
+    if (!receipt?.historyEntryId || receipt.historyEntryId !== request.branchAnchorId) return;
+    const disk = persistedNativeInputs(ctx.sessionManager.getSessionFile()!);
+    const human = ctx.sessionManager.getBranch().find(entry => entry.id === receipt.historyEntryId && matchesNativeInput(entry, request.nativeText ?? receipt.text, disk));
+    if (!human) return;
+    const control = parentRoutingControl(event.message, { ownedPrestartCancel: admission.aborted, signalAborted: ctx.signal?.aborted === true, requestId: request.id, sessionId: request.sessionId, confirmationContextId, humanEntryId: human.id, expectedProvider: ctx.model.provider, expectedApi: ctx.model.api, expectedModel: ctx.model.id });
+    if (!control) return;
+    try { pi.appendEntry("codexteams.parent-routing-abort", control.audit); admission.controlRecorded = true; return { message: control.message }; } catch { return; }
   });
   const parentWriteBlocked = (ctx: ExtensionContext): boolean => {
     try {
@@ -851,7 +953,7 @@ export default function codexteams(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     const file = ctx.sessionManager?.getSessionFile?.();
     if (activeViewFile && activeViewFile === file && activeViewContext === ctx) { attach(ctx); return; }
-    generation++;
+    generation++; confirmationContextId = randomUUID(); nativeAdmission = undefined;
     if (viewTimer) clearTimeout(viewTimer);
     viewTimer = undefined;
     const previousHome = closeHome; closeHome = undefined; previousHome?.();
@@ -901,7 +1003,7 @@ export default function codexteams(pi: ExtensionAPI): void {
     } catch (error) { notify(ctx, error instanceof Error ? error.message : String(error), "warning"); }
   });
   pi.on("session_shutdown", async event => {
-    generation++;
+    generation++; confirmationContextId = randomUUID(); nativeAdmission = undefined;
     if (viewTimer) clearTimeout(viewTimer);
     viewTimer = undefined; activeViewFile = undefined; activeViewContext = undefined;
     const home = closeHome; closeHome = undefined; home?.();

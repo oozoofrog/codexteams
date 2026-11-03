@@ -1,0 +1,40 @@
+{
+  "requestId": "c831b241-eaa3-4ddb-9bfd-4d761208e7e2",
+  "generation": 1,
+  "revision": 1,
+  "kind": "propose_plan",
+  "tasks": [
+    {
+      "id": "append-readme-status",
+      "title": "README에 상태 줄 추가",
+      "description": "작업 전 README.md 내용과 기존 변경 상태를 확인한다. 기존 내용을 보존하고 파일 맨 아래에 `상태: 준비` 한 줄을 추가한다. README.md 외의 파일은 수정하지 않는다.",
+      "role": "developer",
+      "dependsOn": [],
+      "acceptance": [
+        "기존 README.md 내용이 그대로 유지된다.",
+        "맨 아래에 정확히 `상태: 준비` 한 줄이 추가된다.",
+        "이번 작업으로 다른 파일이 변경되지 않는다."
+      ]
+    },
+    {
+      "id": "review-readme-change",
+      "title": "변경 범위와 내용 독립 검증",
+      "description": "파일을 수정하지 않고 작업 전후 차이와 최종 README.md를 확인한다. 기존 내용 보존, 마지막 줄의 정확성, 다른 파일의 변경 여부를 검증하고 결과를 보고한다.",
+      "role": "reviewer",
+      "dependsOn": [
+        "append-readme-status"
+      ],
+      "acceptance": [
+        "README.md의 차이가 요청한 상태 줄 추가에 한정됨을 확인한다.",
+        "작업 전부터 있던 변경과 이번 변경을 구분하여 다른 파일을 수정하지 않았음을 확인한다.",
+        "검증 결과와 발견 사항을 보고한다."
+      ]
+    }
+  ],
+  "checks": [
+    "작업 전후 README.md를 비교하여 기존 내용 보존과 마지막 줄을 확인한다.",
+    "작업 전후 변경 상태를 비교하여 README.md 외에 새 변경이 없는지 확인한다.",
+    "문서 한 줄 추가이므로 빌드와 런타임 테스트는 수행하지 않는다."
+  ],
+  "rationale": "README.md 한 파일만 수정하는 최소 작업과 최종 독립 검증으로 요청 범위 및 기존 내용 보존을 확인한다."
+}

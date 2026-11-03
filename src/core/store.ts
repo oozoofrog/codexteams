@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { defaultProfiles } from "./profiles.ts";
-import { validateState as validateSharedState } from "./state-validation.mjs";
+import { isAcceptedRequest, validateState as validateSharedState } from "./state-validation.mjs";
 import type { ProjectState } from "./types.ts";
 
 interface Lock { pid: number; hostname: string; nonce: string; startedAt: string }
@@ -116,6 +116,18 @@ export class ProjectStore {
     if (this.closed) throw new Error("프로젝트 저장소가 닫혔습니다.");
     this.assertOwner();
     const next = this.snapshot(); mutator(next);
+    for (const request of this.state.teamMode?.requests ?? []) if (isAcceptedRequest(this.state, request)) {
+      const current = next.teamMode?.requests.find(r => r.id === request.id);
+      const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+      if (!same(request, current) || request.taskIds.some(id => !same(this.state.tasks.find(t => t.id === id), next.tasks.find(t => t.id === id))) || !same(this.state.teamMode!.reviewEvidence.filter(e => e.requestId === request.id), next.teamMode?.reviewEvidence.filter(e => e.requestId === request.id))) throw new Error("수락한 요청과 근거는 변경할 수 없습니다. 후속 요청을 만드세요.");
+    }
+    for (const entry of this.state.teamMode?.journal ?? []) {
+      const current = next.teamMode?.journal?.find(e => e.id === entry.id);
+      const stable = (e: typeof entry) => { const { delivery, submittedAt, historyEntryId, ...identity } = e; return identity; };
+      const order = { pending: 0, uncertain: 1, delivered: 2 };
+      if (!current || JSON.stringify(stable(entry)) !== JSON.stringify(stable(current)) || order[current.delivery] < order[entry.delivery] || (entry.submittedAt && entry.submittedAt !== current.submittedAt) || (entry.historyEntryId && entry.historyEntryId !== current.historyEntryId)) throw new Error("대화 기록과 전달 근거는 되돌리거나 변경할 수 없습니다.");
+    }
+    for (const offer of this.state.teamMode?.offers ?? []) if (JSON.stringify(offer) !== JSON.stringify(next.teamMode?.offers?.find(o => o.id === offer.id))) throw new Error("결과 수락 제안은 변경할 수 없습니다.");
     validateSharedState(next, this.root);
     next.revision = this.state.revision + 1; next.updatedAt = new Date().toISOString();
     this.persist(next); this.state = next;

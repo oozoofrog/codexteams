@@ -1,5 +1,7 @@
 import type { ProjectState, TeamModeRequest, Task, ReviewScope } from './types.ts';
-export function reviewScope(request: TeamModeRequest, writer: Task, checkIds: string[]): ReviewScope;
+export function reviewScope(request: TeamModeRequest, writer: Task, checkIds: string[], tasks?: Task[]): ReviewScope;
+export function isAcceptedRequest(state: ProjectState, request: TeamModeRequest): boolean;
+export function acceptedRequestDigest(state: ProjectState, request: TeamModeRequest): string;
 export function reviewScopeDigest(scope: ReviewScope): string;
 export function validateState(state: ProjectState, root: string): void;
 export function validateUsage(usage: unknown): void;

@@ -137,17 +137,23 @@ export interface NavigationState { root: NavigationRoot; views: NavigationView[]
 export interface TeamModeRequest {
   id: string; text: string; origin: "interactive" | "rpc"; sessionId: string; receivedAt: string;
   streamingIntent?: "steer" | "followUp";
-  revision: number; status: "received" | "classifying" | "queued" | "running" | "paused" | "blocked" | "answered" | "awaiting_user_acceptance" | "accepted" | "stopping" | "cancelled" | "failed";
+  revision: number; status: "received" | "classifying" | "clarifying" | "queued" | "running" | "paused" | "blocked" | "answered" | "awaiting_user_acceptance" | "accepted" | "stopping" | "cancelled" | "failed";
   taskIds: string[]; answer?: string; reason?: string; checks?: string[]; checkpoint?: "implementation" | "checks" | "review" | "fix" | "revalidate";
-  amendments?: Array<{ requestId: string; instruction: string; timing: "after_current" | "interrupt_then_resume"; status: "pending" | "applied" }>;
+  amendments?: Array<{ requestId: string; instruction: string; timing: "after_current" | "interrupt_then_resume"; status: "pending" | "applied"; previousChecks?: string[]; checks?: string[]; checksReason?: string }>;
   artifactDigest?: string; fixInstruction?: string; recheckOnly?: boolean;
-  receipt?: { acceptedAt: string; requestRevision: number; implementationTaskId: string; implementationAttemptId: string; reviewerTaskId: string; reviewerAttemptId: string; reviewEvidenceId: string; checkIds: string[]; artifactDigest: string; scopeDigest: string };
+  stages?: string[]; stageCursor?: number; restartFromTaskId?: string; rationale?: string;
+  parentRequestId?: string; parentReceiptDigest?: string; provenance?: "human" | "review";
+  visibleJournalIds?: string[]; branchAnchorId?: string; reviewTargetId?: string; reviewTargetRevision?: number; reviewFingerprint?: string; resolvedByRequestId?: string; confirmationContextId?: string; inputPersistence?: "native" | "custom"; nativeText?: string;
+  receipt?: { acceptedAt: string; requestRevision: number; implementationTaskId: string; implementationAttemptId: string; reviewerTaskId: string; reviewerAttemptId: string; reviewEvidenceId: string; checkIds: string[]; artifactDigest: string; scopeDigest: string; stageAttempts?: StageAttempt[] };
 }
-export interface CoordinatorAttempt extends Attempt { requestId: string; generation: number; requestRevision: number }
+export interface StageAttempt { taskId: string; attemptId: string }
+export interface ChatJournalEntry { id: string; requestId: string; requestRevision: number; sessionId: string; role: "user" | "assistant"; kind: "input" | "progress" | "answer" | "clarification" | "result" | "review" | "control"; text: string; at: string; delivery: "pending" | "uncertain" | "delivered"; submittedAt?: string; historyEntryId?: string }
+export interface AcceptanceOffer { id: string; requestId: string; requestRevision: number; sessionId: string; evidenceId: string; artifactDigest: string; scopeDigest: string; stageAttempts: StageAttempt[]; journalId: string }
+export interface CoordinatorAttempt extends Attempt { requestId: string; generation: number; requestRevision: number; repairOfAttemptId?: string; protocolError?: string }
 export interface TeamModeEvent { id: string; requestId: string; kind: "received" | "applied" | "uncertain"; at: string }
-export interface ReviewScope { requestText: string; amendments: Array<{ requestId: string; instruction: string }>; writer: { id: string; title: string; description: string; acceptance: string[] }; checks: Array<{ id: string; command: string; status: VerificationCheck["status"]; exitCode: number | null; output: string; outputTruncated: boolean }> }
+export interface ReviewScope { reviewer?: { id: string; title: string; description: string; acceptance: string[] }; requestText: string; amendments: Array<{ requestId: string; instruction: string; checks?: { previous: string[]; next: string[]; reason: string } }>; writer: { id: string; title: string; description: string; acceptance: string[] }; checks: Array<{ id: string; command: string; status: VerificationCheck["status"]; exitCode: number | null; output: string; outputTruncated: boolean }>; stages?: Array<{ taskId: string; attemptId: string; role: TaskRole; title: string; description: string; acceptance: string[]; result: string }> }
 export interface TeamModeReviewEvidence { id: string; requestId: string; implementationTaskId: string; implementationAttemptId: string; reviewerTaskId: string; reviewerAttemptId: string; artifactDigest: string; verdict: "pass" | "changes_required" | "blocked"; checkIds: string[]; requestRevision?: number; scope?: ReviewScope; scopeDigest?: string }
-export interface TeamModeState { version: 1; enabled: boolean; generation: number; requests: TeamModeRequest[]; coordinatorAttempts: CoordinatorAttempt[]; events: TeamModeEvent[]; reviewEvidence: TeamModeReviewEvidence[] }
+export interface TeamModeState { version: 1; enabled: boolean; generation: number; requests: TeamModeRequest[]; coordinatorAttempts: CoordinatorAttempt[]; events: TeamModeEvent[]; reviewEvidence: TeamModeReviewEvidence[]; journal?: ChatJournalEntry[]; offers?: AcceptanceOffer[]; latestHumanRequestId?: string; pendingNativeRequestId?: string }
 
 export interface ProjectState {
   schemaVersion: 1;

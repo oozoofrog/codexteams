@@ -3,9 +3,9 @@ import type { Effort, ModelProfile, Role } from "./types.ts";
 
 export function defaultProfiles(): Record<Role, ModelProfile> {
   return {
-    planner: { provider: "openai", model: "gpt-6.1-sol", effort: "medium" },
-    developer: { provider: "openai", model: "gpt-6.1-sol", effort: "medium" },
-    designer: { provider: "openai", model: "gpt-6.1-terra", effort: "medium" },
+    planner: { provider: "openai", model: "gpt-6-astra", effort: "high" },
+    developer: { provider: "openai", model: "gpt-6.1-sol", effort: "high" },
+    designer: { provider: "openai", model: "gpt-6-astra", effort: "high" },
     reviewer: { provider: "openai", model: "gpt-6.1-sol", effort: "high" },
   };
 }

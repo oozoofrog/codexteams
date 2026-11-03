@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { TeamController } from "./controller.ts";
+import type { AcceptanceOffer, TeamModeRequest } from "./types.ts";
 import type { TeamModeSupervisor } from "./team-mode.ts";
 
 // This symbol intentionally has a stable name across independently loaded module graphs.
@@ -10,6 +11,7 @@ const source = realpathSync(fileURLToPath(new URL("../index.ts", import.meta.url
 export interface ScreenBinding {
   token: object;
   changed(): void;
+  canAccept?(request: TeamModeRequest, offer: AcceptanceOffer): boolean;
   message(content: string, type?: string): void;
   notify(content: string, level?: "info" | "warning" | "error"): void;
 }

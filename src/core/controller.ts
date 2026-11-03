@@ -262,7 +262,8 @@ export class TeamController {
     }
     this.observeOperation({ phase: "waiting", attemptId: attempt.id });
     this.notify(`${id}: ${task.role} 실행`);
-    const dependencies = task.dependsOn.map(dep => {
+    const managed = snapshot.teamMode?.requests.find(r => r.stages?.includes(id));
+    const dependencies = [...task.dependsOn, ...(managed?.stages?.slice(0, managed.stages.indexOf(id)) ?? [])].map(dep => {
       const other = this.findTask(dep, snapshot);
       return { id: dep, title: other.title, result: other.attempts.at(-1)?.text.slice(-8000) };
     });
@@ -371,7 +372,11 @@ export class TeamController {
       const reviewer = state.tasks.find(item => item.id === request.taskIds[1]);
       const evidence = state.teamMode?.reviewEvidence.filter(item => item.requestId === request.id && item.implementationTaskId === id).at(-1);
       const relevantChecks = (request.checks ?? []).map(command => task.checks.filter(check => check.attemptId === task.attempts.at(-1)!.id && check.source === "team_coordinator" && check.command === command).at(-1));
-      if (request.amendments?.some(a => a.status === "pending") || request.status !== "awaiting_user_acceptance" || request.taskIds[0] !== id || !evidence || evidence.verdict !== "pass" || evidence.requestRevision !== request.revision || !evidence.scopeDigest || evidence.scopeDigest !== reviewScopeDigest(reviewScope(request, task, evidence.checkIds)) || evidence.implementationAttemptId !== task.attempts.at(-1)?.id || evidence.reviewerAttemptId !== reviewer?.attempts.at(-1)?.id || relevantChecks.some(check => check?.status !== "passed") || JSON.stringify(relevantChecks.map(check => check?.id)) !== JSON.stringify(evidence.checkIds)) throw new Error("현재 실행에 연결된 독립 검토와 검증 근거가 없습니다.");
+      if (request.amendments?.some(a => a.status === "pending") || request.status !== "awaiting_user_acceptance" || request.taskIds[0] !== id || !evidence || evidence.verdict !== "pass" || evidence.requestRevision !== request.revision || !evidence.scopeDigest || evidence.scopeDigest !== reviewScopeDigest(reviewScope(request, task, evidence.checkIds, state.tasks)) || evidence.implementationAttemptId !== task.attempts.at(-1)?.id || evidence.reviewerAttemptId !== reviewer?.attempts.at(-1)?.id || relevantChecks.some(check => check?.status !== "passed") || JSON.stringify(relevantChecks.map(check => check?.id)) !== JSON.stringify(evidence.checkIds)) throw new Error("현재 실행에 연결된 독립 검토와 검증 근거가 없습니다.");
+      if (request.stages) {
+        const stages = evidence.scope?.stages;
+        if (!stages || request.stageCursor !== request.stages.length || stages.length !== request.stages.length || stages.some((stage, index) => { const t = state.tasks.find(t => t.id === request.stages![index]); return !t || stage.taskId !== t.id || stage.attemptId !== t.attempts.at(-1)?.id || t.status !== "needs_review" || t.attempts.at(-1)?.outcome !== "success"; })) throw new Error("현재 전체 단계에 연결된 독립 검토 근거가 없습니다.");
+      }
       let digest: string;
       try { digest = artifactDigest(this.store.root); } catch { throw new Error("검토 파일을 확인할 수 없습니다."); }
       if (digest !== evidence.artifactDigest) throw new Error("검토 이후 파일 내용이 변경되었습니다. 다시 검토하세요.");
@@ -383,7 +388,8 @@ export class TeamController {
         const r = state.teamMode!.requests.find(item => item.id === request.id)!;
         const evidence = state.teamMode!.reviewEvidence.filter(item => item.requestId === r.id && item.implementationTaskId === id).at(-1)!;
         r.status = "accepted";
-        r.receipt = { acceptedAt: t.acceptedAt, requestRevision: r.revision, implementationTaskId: id, implementationAttemptId: attempt.id, reviewerTaskId: evidence.reviewerTaskId, reviewerAttemptId: evidence.reviewerAttemptId, reviewEvidenceId: evidence.id, checkIds: [...evidence.checkIds], artifactDigest: evidence.artifactDigest, scopeDigest: evidence.scopeDigest! };
+        r.receipt = { acceptedAt: t.acceptedAt, requestRevision: r.revision, implementationTaskId: id, implementationAttemptId: attempt.id, reviewerTaskId: evidence.reviewerTaskId, reviewerAttemptId: evidence.reviewerAttemptId, reviewEvidenceId: evidence.id, checkIds: [...evidence.checkIds], artifactDigest: evidence.artifactDigest, scopeDigest: evidence.scopeDigest!, ...(r.stages ? { stageAttempts: r.stages.map(tid => state.tasks.find(x => x.id === tid)!).filter(x => x.role !== "reviewer").map(x => ({ taskId: x.id, attemptId: x.attempts.at(-1)!.id })) } : {}) };
+        for (const stage of r.receipt.stageAttempts ?? []) { const task = state.tasks.find(x => x.id === stage.taskId)!; task.status = "completed"; task.updatedAt = task.acceptedAt = t.acceptedAt; task.acceptanceSource = "user"; task.acceptedAttemptId = stage.attemptId; task.acceptedCheckIds = task.checks.filter(c => c.attemptId === stage.attemptId).map(c => c.id); }
       }
     });
     this.notify(`${id}: 사용자 수락`);

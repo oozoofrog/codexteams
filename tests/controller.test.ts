@@ -28,7 +28,7 @@ test("goal -> validated plan -> task -> review -> acceptance unlocks dependency"
   const { controller } = setup(t, async request => { requests.push(request); return result(request, requests.length === 1 ? JSON.stringify(plan) : "implemented"); });
   await controller.start("디스크 앱");
   assert.deepEqual(requests[0].tools, ["read", "grep", "find", "ls"]);
-  assert.equal(requests[0].profile.model, "gpt-6.1-sol");
+  assert.equal(requests[0].profile.model, "gpt-6-astra");
   const first = await controller.run();
   assert.deepEqual(first.executed, ["scan"]);
   assert.equal(controller.snapshot().tasks[0].status, "needs_review");
@@ -36,7 +36,7 @@ test("goal -> validated plan -> task -> review -> acceptance unlocks dependency"
   controller.accept("scan");
   const second = await controller.run();
   assert.deepEqual(second.executed, ["view"]);
-  assert.equal(requests[2].profile.model, "gpt-6.1-terra");
+  assert.equal(requests[2].profile.model, "gpt-6-astra");
   assert.equal(controller.snapshot().tasks[0].acceptanceSource, "user");
 });
 

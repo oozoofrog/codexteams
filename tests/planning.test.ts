@@ -34,8 +34,16 @@ test("profiles are explicit, independent and never accept ultra as native effort
   const one = defaultProfiles();
   const two = defaultProfiles();
   one.developer.effort = "max";
-  assert.equal(two.developer.effort, "medium");
-  assert.equal(two.designer.model, "gpt-6.1-terra");
+  assert.equal(two.developer.effort, "high");
+  assert.equal(two.designer.model, "gpt-6-astra");
   assert.throws(() => validateProfile({ provider: "openai", model: "gpt-6-astra", effort: "ultra" }));
   assert.equal(validateProfile({ provider: "openai", model: "gpt-6-astra", effort: "max" }).effort, "max");
+});
+
+test("new project role defaults honor explicit leader and worker preferences", () => {
+ const profiles = defaultProfiles();
+ assert.deepEqual(profiles.planner, { provider: "openai", model: "gpt-6-astra", effort: "high" });
+ assert.deepEqual(profiles.designer, { provider: "openai", model: "gpt-6-astra", effort: "high" });
+ assert.deepEqual(profiles.developer, { provider: "openai", model: "gpt-6.1-sol", effort: "high" });
+ assert.deepEqual(profiles.reviewer, { provider: "openai", model: "gpt-6.1-sol", effort: "high" });
 });

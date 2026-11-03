@@ -56,9 +56,17 @@ test("managed acceptance persists a linked request receipt atomically", async t 
   assert.equal(accepted.receipt?.reviewEvidenceId, after.teamMode!.reviewEvidence.at(-1)!.id);
   assert.throws(() => controller.accept(writer.id));
   assert.throws(() => store.update(s => { s.teamMode!.requests.find(r => r.id === id)!.receipt!.reviewEvidenceId = "tampered"; }));
-  store.update(s => { const r = s.teamMode!.requests.find(r => r.id === id)!; r.status = "awaiting_user_acceptance"; delete r.receipt; });
-  const legacy = store.snapshot();
+  assert.throws(() => store.update(s => { const r = s.teamMode!.requests.find(r => r.id === id)!; r.status = "awaiting_user_acceptance"; delete r.receipt; }), /수락한 요청/);
+  // Load a genuine historical shape through the reader, rather than rewriting an accepted record with the current writer.
+  const historical = structuredClone(after);
+  const old = historical.teamMode!.requests.find(r => r.id === id)!; old.status = "awaiting_user_acceptance"; delete old.receipt;
+  await supervisor.shutdown(); store.close();
+  writeFileSync(join(root, ".codexteams", "state.json"), JSON.stringify(historical));
+  const legacyStore = ProjectStore.open(root);
+  const legacySupervisor = new TeamModeSupervisor(legacyStore, { runner, validateProfile: async () => {} });
+  t.after(async () => { await legacySupervisor.shutdown(); legacyStore.close(); });
+  const legacy = legacyStore.snapshot();
   assert.equal(isLegacyAccepted(legacy, legacy.teamMode!.requests.find(r => r.id === id)!), true);
-  assert.throws(() => supervisor.resume(id), /이전 수락/);
-  assert.deepEqual(store.snapshot(), legacy);
+  assert.throws(() => legacySupervisor.resume(id), /이전 수락/);
+  assert.deepEqual(legacyStore.snapshot(), legacy);
 });
